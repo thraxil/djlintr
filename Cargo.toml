@@ -1,0 +1,24 @@
+[package]
+name = "djlintr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1.10"
+clap = { version = "4.4", features = ["derive"] }
+walkdir = "2.4"
+rayon = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+anyhow = "1.0"
+colored = "2.1"
+indicatif = { version = "0.17", features = ["rayon"] }
+
+[dev-dependencies]
+rstest = "0.18"
+criterion = "0.5"
+
+[[bench]]
+name = "linter_bench"
+harness = false
