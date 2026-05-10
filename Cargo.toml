@@ -18,7 +18,7 @@ indicatif = { version = "0.17", features = ["rayon"] }
 
 [dev-dependencies]
 rstest = "0.18"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "linter_bench"
