@@ -148,13 +148,13 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        // If no match, it's text until the next '<', '{', or '<!--'
+        // If no match, it's text until the next '<' or '{'
         let mut next_stop = remaining.len();
-        if let Some(i) = remaining[1..].find('<') {
-            next_stop = std::cmp::min(next_stop, i + 1);
-        }
-        if let Some(i) = remaining[1..].find('{') {
-            next_stop = std::cmp::min(next_stop, i + 1);
+        for (i, c) in remaining.char_indices() {
+            if i > 0 && (c == '<' || c == '{') {
+                next_stop = i;
+                break;
+            }
         }
         
         let raw = &remaining[..next_stop];
