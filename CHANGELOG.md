@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-10
+
+### Added
+- Profile support (`--profile`) to match Python djlint's rule exclusion logic. Supported profiles: `html`, `django`, `jinja`, `nunjucks`, `handlebars`, `golang`, `angular`, and `all`.
+- Default profile is `html`, which correctly excludes template-specific rules (`T`, `D`, `J`, etc.) by default, achieving parity with Python djlint.
+
+### Changed
+- Simplified `T003` (named endblocks) implementation to match Python's regex exactly, removing the incorrect one-liner exception.
+
 ## [0.3.0] - 2026-05-10
 
 ### Added

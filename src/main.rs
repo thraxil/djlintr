@@ -41,6 +41,10 @@ struct Args {
     /// Comma-separated list of custom block tags
     #[arg(long, value_delimiter = ',')]
     custom_blocks: Option<Vec<String>>,
+
+    /// Profile for the template language
+    #[arg(short, long)]
+    profile: Option<String>,
 }
 
 struct FileResult {
@@ -57,6 +61,10 @@ fn main() -> Result<()> {
 
     if let Some(custom_blocks) = &args.custom_blocks {
         config.custom_blocks.extend(custom_blocks.clone());
+    }
+
+    if let Some(profile) = &args.profile {
+        config.profile = profile.clone();
     }
 
     if let Some(threads) = args.threads {

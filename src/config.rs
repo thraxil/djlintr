@@ -14,6 +14,8 @@ pub struct Config {
     pub ignore: Vec<String>,
     #[serde(default)]
     pub custom_blocks: Vec<String>,
+    #[serde(default = "default_profile")]
+    pub profile: String,
 }
 
 fn default_indent() -> usize {
@@ -25,6 +27,9 @@ fn default_max_line_length() -> usize {
 fn default_max_attribute_length() -> usize {
     70
 }
+fn default_profile() -> String {
+    "html".to_string()
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -34,6 +39,7 @@ impl Default for Config {
             max_attribute_length: 70,
             ignore: Vec::new(),
             custom_blocks: Vec::new(),
+            profile: "html".to_string(),
         }
     }
 }

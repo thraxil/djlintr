@@ -78,7 +78,15 @@ use rstest::rstest;
 )]
 #[case(
     "{% block title %}- User Create{% endblock %}",
-    vec![]
+    vec![
+        LintError {
+            code: "T003".to_string(),
+            line: 1,
+            column: 30,
+            match_str: "{% endblock %}".to_string(),
+            message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
+        }
+    ]
 )]
 #[case(
     "{% block title %}\n- User Create\n{% endblock %}",
@@ -112,8 +120,21 @@ use rstest::rstest;
     "<a href=\"?foo={{ bar }}\">foo</a>",
     vec![]
 )]
+#[case(
+    "{% block foo %}\n    Bar\n{% endblock %}",
+    vec![
+        LintError {
+            code: "T003".to_string(),
+            line: 3,
+            column: 0,
+            match_str: "{% endblock %}".to_string(),
+            message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
+        }
+    ]
+)]
 fn test_django_linter(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
-    let config = Config::default();
+    let mut config = Config::default();
+    config.profile = "all".to_string();
     let mut output = lint(&config, source);
     output.retain(|e| e.code != "H017" && e.code != "J004" && e.code != "J018");
     expected.retain(|e| e.code != "H017" && e.code != "J004" && e.code != "J018");

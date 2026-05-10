@@ -27,13 +27,13 @@ use rstest::rstest;
     ]
 )]
 #[case(
-    "<a class=\"{% if x %}\">",
+    "<a class=\" {% if x %}\">",
     vec![
         LintError {
             code: "T028".to_string(),
             line: 1,
             column: 0,
-            match_str: "class=\"{% if x %}\"".to_string(),
+            match_str: "class=\" {%".to_string(),
             message: "Consider using spaceless tags inside attribute values. {%- if/for -%}".to_string(),
         }
     ]
@@ -90,7 +90,8 @@ use rstest::rstest;
     ]
 )]
 fn test_batch_3_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
-    let config = Config::default();
+    let mut config = Config::default();
+    config.profile = "all".to_string();
     let mut output = lint(&config, source);
 
     output.retain(|e| {

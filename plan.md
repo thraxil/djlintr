@@ -101,7 +101,7 @@ The goal of this project is to port the Python tool `djlint` to Rust to improve 
 
 Implement missing configuration options from the original Python `djlint`:
 
-- [ ] **Profile Support**: Support different template languages via `--profile` (`django`, `jinja`, `nunjucks`, `handlebars`, `golang`, `angular`, `html`).
+- [x] **Profile Support**: Support different template languages via `--profile` (`django`, `jinja`, `nunjucks`, `handlebars`, `golang`, `angular`, `html`, `all`).
 - [ ] **Include Rules**: Add `--include` to specifically run only certain linter codes.
 - [x] **Advanced Attribute Wrapping**: Implement `--max-attribute-length` (default: 70).
 - [ ] **Gitignore Integration**: Implement `--use-gitignore` to honor `.gitignore` files.

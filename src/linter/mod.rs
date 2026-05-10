@@ -497,51 +497,14 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     let inner = raw.trim_start_matches("{%").trim_end_matches("%}").trim();
                     if inner == "endblock" {
                         // Special case: djlint (Python) allows anonymous endblock if it's a one-liner
-                        // We check if the previous token was on the same line and started with 'block'
-                        let mut is_one_liner = false;
-                        if i > 0 {
-                            for j in (0..i).rev() {
-                                match &tokens[j] {
-                                    Token::DjangoBlock {
-                                        raw: prev_raw,
-                                        line: prev_line,
-                                        ..
-                                    } => {
-                                        if prev_line == line {
-                                            let prev_inner = prev_raw
-                                                .trim_start_matches("{%")
-                                                .trim_end_matches("%}")
-                                                .trim();
-                                            if prev_inner.starts_with("block") {
-                                                is_one_liner = true;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                    Token::Text { raw: text_raw, .. }
-                                        if text_raw.contains('\n') =>
-                                    {
-                                        break
-                                    }
-                                    Token::Tag { .. }
-                                    | Token::Comment { .. }
-                                    | Token::Doctype { .. }
-                                    | Token::DjangoVar { .. } => {}
-                                    _ => {}
-                                }
-                            }
-                        }
-
-                        if !is_one_liner {
-                            errors.push(LintError {
-                                code: "T003".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Endblock should have name. Ex: {% endblock body %}."
-                                    .to_string(),
-                            });
-                        }
+                        errors.push(LintError {
+                            code: "T003".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message: "Endblock should have name. Ex: {% endblock body %}."
+                                .to_string(),
+                        });
                     }
                 }
 
@@ -652,10 +615,28 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     errors.sort_by_key(|e| (e.line, e.column));
 
-    // Filter ignored rules
+    // Filter by profile
+    let excluded_prefixes = match config.profile.to_lowercase().as_str() {
+        "all" => vec![],
+        "html" => vec!["D", "J", "T", "N", "M"],
+        "django" => vec!["J", "N", "M"],
+        "jinja" => vec!["D", "N", "M"],
+        "nunjucks" => vec!["D", "J", "M"],
+        "handlebars" => vec!["D", "J", "N"],
+        "golang" => vec!["D", "J", "N", "M"],
+        "angular" => vec!["D", "J", "H012", "H026", "H028"],
+        _ => vec![],
+    };
+
+    // Filter ignored rules and profile exclusions
     errors
         .into_iter()
-        .filter(|e| !config.ignore.contains(&e.code))
+        .filter(|e| {
+            !config.ignore.contains(&e.code)
+                && !excluded_prefixes
+                    .iter()
+                    .any(|prefix| e.code.starts_with(prefix))
+        })
         .collect()
 }
 
