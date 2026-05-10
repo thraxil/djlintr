@@ -4,7 +4,10 @@ use djlintr::{config::Config, format, lint};
 fn generate_large_template() -> String {
     let mut template = String::from("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <title>Benchmark</title>\n</head>\n<body>\n");
     for i in 0..1000 {
-        template.push_str(&format!("    <div id=\"item-{}\" class=\"container\">\n", i));
+        template.push_str(&format!(
+            "    <div id=\"item-{}\" class=\"container\">\n",
+            i
+        ));
         template.push_str("        <p>This is item {{ i }}</p>\n");
         template.push_str("        {% if i % 2 == 0 %}\n");
         template.push_str("            <span>Even</span>\n");
@@ -21,7 +24,7 @@ fn generate_large_template() -> String {
 fn bench_linter(c: &mut Criterion) {
     let template = generate_large_template();
     let config = Config::default();
-    
+
     c.bench_function("lint_large_template", |b| {
         b.iter(|| lint(black_box(&config), black_box(&template)))
     });
@@ -30,7 +33,7 @@ fn bench_linter(c: &mut Criterion) {
 fn bench_formatter(c: &mut Criterion) {
     let template = generate_large_template();
     let config = Config::default();
-    
+
     c.bench_function("format_large_template", |b| {
         b.iter(|| format(black_box(&config), black_box(&template)))
     });

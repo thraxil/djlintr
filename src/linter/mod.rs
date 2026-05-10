@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::formatter::tokenizer::{Token, Tokenizer};
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -16,18 +16,19 @@ pub struct LintError {
 pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let mut errors = Vec::new();
     let tokens: Vec<Token> = Tokenizer::new(source).collect();
-    
+
     let mut open_tags: Vec<(String, usize, usize)> = Vec::new();
     let single_quote_attr_re = Regex::new(r#"\s+[a-zA-Z0-9:-]+='[^']*'"#).unwrap();
     let uppercase_attr_re = Regex::new(r#"\b[A-Z0-9:-]+="#).unwrap();
-    
+
     // Batch 1 Rules Regex
     let unquoted_attr_re = Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap();
     let space_around_eq_re = Regex::new(r#"\b[a-zA-Z0-9:-]+\s+=|=\s+["'{a-zA-Z0-9]"#).unwrap();
     let js_link_re = Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap();
     let inline_style_re = Regex::new(r#"(?i)\bstyle=["']"#).unwrap();
     let http_link_re = Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap();
-    let script_style_type_re = Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap();
+    let script_style_type_re =
+        Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap();
     let empty_id_class_re = Regex::new(r#"(?i)\b(?:id|class)=['"]['"]"#).unwrap();
 
     // Batch 2 State
@@ -36,12 +37,16 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let mut has_meta_description = false;
     let mut has_meta_keywords = false;
     let mut html_tag_pos: Option<(usize, usize, String)> = None;
-    let form_action_ws_re = Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap();
+    let form_action_ws_re =
+        Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap();
     let attr_name_re = Regex::new(r#"(?i)\s([a-zA-Z0-9:-]+)="#).unwrap();
+    let method_re = Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap();
+    let entity_re = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap();
 
     // Batch 3 Regex
     let extra_blank_lines_re = Regex::new(r#"(?m)[^\n]{0,10}\n\s*\n\s*\n"#).unwrap();
-    let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=['"]\{%\s+(?:if|for).*?%\}.*?['"]"#).unwrap();
+    let spaceless_tags_re =
+        Regex::new(r#"(?i)\b(?:class|id)=['"]\{%\s+(?:if|for).*?%\}.*?['"]"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
     // Run whole-source regexes (like extra blank lines)
@@ -62,7 +67,14 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             Token::Doctype { .. } => {
                 has_doctype = true;
             }
-            Token::Tag { name, raw, is_closing, is_self_closing, line, column } => {
+            Token::Tag {
+                name,
+                raw,
+                is_closing,
+                is_self_closing,
+                line,
+                column,
+            } => {
                 let name_lower = name.to_lowercase();
                 let raw_lower = raw.to_lowercase();
 
@@ -82,22 +94,28 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H015: Follow h tags with a line break
-                    if name_lower.starts_with('h') && name_lower.len() == 2 && name_lower.chars().nth(1).unwrap().is_ascii_digit() {
-                        if i + 1 < tokens.len() {
-                            if let Token::Tag { line: next_line, raw: next_raw, .. } = &tokens[i+1] {
-                                if line == next_line {
-                                    errors.push(LintError {
-                                        code: "H015".to_string(),
-                                        line: *line,
-                                        column: *column + raw.len(), // approximate column
-                                        match_str: next_raw.to_string(),
-                                        message: "Follow h tags with a line break.".to_string(),
-                                    });
-                                }
+                    if name_lower.starts_with('h')
+                        && name_lower.len() == 2
+                        && name_lower.chars().nth(1).unwrap().is_ascii_digit()
+                        && i + 1 < tokens.len()
+                    {
+                        if let Token::Tag {
+                            line: next_line,
+                            raw: next_raw,
+                            ..
+                        } = &tokens[i + 1]
+                        {
+                            if line == next_line {
+                                errors.push(LintError {
+                                    code: "H015".to_string(),
+                                    line: *line,
+                                    column: *column + raw.len(), // approximate column
+                                    match_str: next_raw.to_string(),
+                                    message: "Follow h tags with a line break.".to_string(),
+                                });
                             }
                         }
                     }
-
                 } else {
                     if name_lower == "html" {
                         html_tag_pos = Some((*line, *column, raw.to_string()));
@@ -108,7 +126,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                 line: *line,
                                 column: *column,
                                 match_str: raw.to_string(),
-                                message: "<!DOCTYPE ... > should be present before the html tag.".to_string(),
+                                message: "<!DOCTYPE ... > should be present before the html tag."
+                                    .to_string(),
                             });
                         }
                     }
@@ -117,13 +136,17 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         has_title = true;
                     }
                     if name_lower == "meta" {
-                        if raw_lower.contains("name=\"description\"") || raw_lower.contains("name='description'") {
+                        if raw_lower.contains("name=\"description\"")
+                            || raw_lower.contains("name='description'")
+                        {
                             has_meta_description = true;
                         }
-                        if raw_lower.contains("name=\"keywords\"") || raw_lower.contains("name='keywords'") {
+                        if raw_lower.contains("name=\"keywords\"")
+                            || raw_lower.contains("name='keywords'")
+                        {
                             has_meta_keywords = true;
                         }
-                        
+
                         // Rule H035: Meta tags should be self closing
                         if !raw.ends_with("/>") {
                             errors.push(LintError {
@@ -137,7 +160,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H017: Void tags self closing (excluding meta for H035)
-                    if is_void_element(&name_lower) && name_lower != "meta" && !raw.ends_with("/>") {
+                    if is_void_element(&name_lower) && name_lower != "meta" && !raw.ends_with("/>")
+                    {
                         errors.push(LintError {
                             code: "H017".to_string(),
                             line: *line,
@@ -148,9 +172,18 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H020: Empty tag pair
-                    if !is_self_closing && !is_void_element(&name_lower) && !matches!(name_lower.as_str(), "th" | "td" | "i" | "span") && i + 1 < tokens.len() {
-                        if let Token::Tag { is_closing: true, name: next_name, .. } = &tokens[i+1] {
-                            if &next_name.to_lowercase() == &name_lower {
+                    if !is_self_closing
+                        && !is_void_element(&name_lower)
+                        && !matches!(name_lower.as_str(), "th" | "td" | "i" | "span")
+                        && i + 1 < tokens.len()
+                    {
+                        if let Token::Tag {
+                            is_closing: true,
+                            name: next_name,
+                            ..
+                        } = &tokens[i + 1]
+                        {
+                            if next_name.to_lowercase() == name_lower {
                                 errors.push(LintError {
                                     code: "H020".to_string(),
                                     line: *line,
@@ -241,7 +274,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                 line: *line,
                                 column: *column,
                                 match_str: raw.to_string(),
-                                message: "Img tag should have height and width attributes.".to_string(),
+                                message: "Img tag should have height and width attributes."
+                                    .to_string(),
                             });
                         }
                         if !raw_lower.contains("alt=") {
@@ -265,7 +299,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             message: "Attributes should be double quoted.".to_string(),
                         });
                     }
-                    
+
                     // Rule H011: Attribute values should be quoted
                     if let Some(m) = unquoted_attr_re.find(raw) {
                         errors.push(LintError {
@@ -295,7 +329,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             line: *line,
                             column: *column,
                             match_str: m.as_str().to_string(),
-                            message: "Replace 'javascript:abc()' with on_ event and real url.".to_string(),
+                            message: "Replace 'javascript:abc()' with on_ event and real url."
+                                .to_string(),
                         });
                     }
 
@@ -322,7 +357,9 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H024: Omit type on scripts and styles
-                    if (name_lower == "script" || name_lower == "style") && script_style_type_re.is_match(raw) {
+                    if (name_lower == "script" || name_lower == "style")
+                        && script_style_type_re.is_match(raw)
+                    {
                         errors.push(LintError {
                             code: "H024".to_string(),
                             line: *line,
@@ -345,7 +382,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                     // Rule H029: Consider using lowercase form method values
                     if name_lower == "form" {
-                        if let Some(caps) = Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap().captures(raw) {
+                        if let Some(caps) = method_re.captures(raw) {
                             let method_val = caps.get(1).unwrap().as_str();
                             if method_val.chars().any(|c| c.is_uppercase()) {
                                 errors.push(LintError {
@@ -353,7 +390,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                     line: *line,
                                     column: *column,
                                     match_str: caps.get(0).unwrap().as_str().to_string(),
-                                    message: "Consider using lowercase form method values.".to_string(),
+                                    message: "Consider using lowercase form method values."
+                                        .to_string(),
                                 });
                             }
                         }
@@ -371,45 +409,50 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule D004 & J004: Static urls
-                    if name_lower == "link" || name_lower == "script" || name_lower == "img" {
-                        if raw.contains("src=\"/static/") || raw.contains("href=\"/static/") {
-                            errors.push(LintError {
-                                code: "D004".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "(Django) Static urls should follow {% static path/to/file %} pattern.".to_string(),
-                            });
-                            errors.push(LintError {
-                                code: "J004".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "(Jinja) Static urls should follow {{ url_for('static'..) }} pattern.".to_string(),
-                            });
-                        }
+                    if (name_lower == "link" || name_lower == "script" || name_lower == "img")
+                        && (raw.contains("src=\"/static/") || raw.contains("href=\"/static/"))
+                    {
+                        errors.push(LintError {
+                            code: "D004".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message: "(Django) Static urls should follow {% static path/to/file %} pattern.".to_string(),
+                        });
+                        errors.push(LintError {
+                            code: "J004".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message: "(Jinja) Static urls should follow {{ url_for('static'..) }} pattern.".to_string(),
+                        });
                     }
 
                     // Rule D018 & J018: Internal links
-                    if name_lower == "a" || name_lower == "form" {
-                        if (raw.contains("href=\"/") || raw.contains("action=\"/")) 
-                           && !raw.contains("href=\"#") && !raw.contains("action=\"#")
-                           && !raw.contains("{% url") {
-                            errors.push(LintError {
-                                code: "D018".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "(Django) Internal links should use the {% url ... %} pattern.".to_string(),
-                            });
-                            errors.push(LintError {
-                                code: "J018".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "(Jinja) Internal links should use the {{ url_for() ... }} pattern.".to_string(),
-                            });
-                        }
+                    if (name_lower == "a" || name_lower == "form")
+                        && (raw.contains("href=\"/") || raw.contains("action=\"/"))
+                        && !raw.contains("href=\"#")
+                        && !raw.contains("action=\"#")
+                        && !raw.contains("{% url")
+                    {
+                        errors.push(LintError {
+                            code: "D018".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message:
+                                "(Django) Internal links should use the {% url ... %} pattern."
+                                    .to_string(),
+                        });
+                        errors.push(LintError {
+                            code: "J018".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message:
+                                "(Jinja) Internal links should use the {{ url_for() ... }} pattern."
+                                    .to_string(),
+                        });
                     }
 
                     if !is_self_closing {
@@ -421,7 +464,9 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 let is_var = matches!(token, Token::DjangoVar { .. });
                 let (open_tag, close_tag) = if is_var { ("{{", "}}") } else { ("{%", "%}") };
 
-                if !raw.starts_with(&format!("{} ", open_tag)) || !raw.ends_with(&format!(" {}", close_tag)) {
+                if !raw.starts_with(&format!("{} ", open_tag))
+                    || !raw.ends_with(&format!(" {}", close_tag))
+                {
                     errors.push(LintError {
                         code: "T001".to_string(),
                         line: *line,
@@ -432,7 +477,13 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 }
 
                 if !is_var {
-                    if raw.contains('\'') && (raw.contains("extends") || raw.contains("include") || raw.contains("with") || raw.contains("trans") || raw.contains("now")) {
+                    if raw.contains('\'')
+                        && (raw.contains("extends")
+                            || raw.contains("include")
+                            || raw.contains("with")
+                            || raw.contains("trans")
+                            || raw.contains("now"))
+                    {
                         errors.push(LintError {
                             code: "T002".to_string(),
                             line: *line,
@@ -450,17 +501,31 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         if i > 0 {
                             for j in (0..i).rev() {
                                 match &tokens[j] {
-                                    Token::DjangoBlock { raw: prev_raw, line: prev_line, .. } => {
+                                    Token::DjangoBlock {
+                                        raw: prev_raw,
+                                        line: prev_line,
+                                        ..
+                                    } => {
                                         if prev_line == line {
-                                            let prev_inner = prev_raw.trim_start_matches("{%").trim_end_matches("%}").trim();
+                                            let prev_inner = prev_raw
+                                                .trim_start_matches("{%")
+                                                .trim_end_matches("%}")
+                                                .trim();
                                             if prev_inner.starts_with("block") {
                                                 is_one_liner = true;
                                             }
                                         }
                                         break;
                                     }
-                                    Token::Text { raw: text_raw, .. } if text_raw.contains('\n') => break,
-                                    Token::Tag { .. } | Token::Comment { .. } | Token::Doctype { .. } | Token::DjangoVar { .. } => {}
+                                    Token::Text { raw: text_raw, .. }
+                                        if text_raw.contains('\n') =>
+                                    {
+                                        break
+                                    }
+                                    Token::Tag { .. }
+                                    | Token::Comment { .. }
+                                    | Token::Doctype { .. }
+                                    | Token::DjangoVar { .. } => {}
                                     _ => {}
                                 }
                             }
@@ -472,7 +537,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                 line: *line,
                                 column: *column,
                                 match_str: raw.to_string(),
-                                message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
+                                message: "Endblock should have name. Ex: {% endblock body %}."
+                                    .to_string(),
                             });
                         }
                     }
@@ -499,16 +565,28 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         line: *line,
                         column: *column,
                         match_str: m.as_str().to_string(),
-                        message: "Did you intend to use {% ... %} instead of {% ... }%?".to_string(),
+                        message: "Did you intend to use {% ... %} instead of {% ... }%?"
+                            .to_string(),
                     });
                 }
             }
             Token::Text { raw, line, column } => {
                 // Rule H023: Do not use entity references
-                if let Some(m) = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap().find(raw) {
+                if let Some(m) = entity_re.find(raw) {
                     let entity = m.as_str();
                     // djlint allows some common ones like &nbsp;, &lt;, &gt;, &amp;, &quot;, &ensp;, &emsp;, &thinsp;, &shy;
-                    if !matches!(entity, "&nbsp;" | "&lt;" | "&gt;" | "&amp;" | "&quot;" | "&ensp;" | "&emsp;" | "&thinsp;" | "&shy;") {
+                    if !matches!(
+                        entity,
+                        "&nbsp;"
+                            | "&lt;"
+                            | "&gt;"
+                            | "&amp;"
+                            | "&quot;"
+                            | "&ensp;"
+                            | "&emsp;"
+                            | "&thinsp;"
+                            | "&shy;"
+                    ) {
                         errors.push(LintError {
                             code: "H023".to_string(),
                             line: *line,
@@ -556,7 +634,10 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     }
 
     // After all tokens, if any open_tags left, they are orphans
-    if source.to_lowercase().contains("<a>") || source.to_lowercase().contains("<html>") || source.to_lowercase().contains("<div>") {
+    if source.to_lowercase().contains("<a>")
+        || source.to_lowercase().contains("<html>")
+        || source.to_lowercase().contains("<div>")
+    {
         for (tag_name, line, column) in open_tags {
             errors.push(LintError {
                 code: "H025".to_string(),
@@ -569,14 +650,30 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     }
 
     errors.sort_by_key(|e| (e.line, e.column));
-    
+
     // Filter ignored rules
-    errors.into_iter().filter(|e| !config.ignore.contains(&e.code)).collect()
+    errors
+        .into_iter()
+        .filter(|e| !config.ignore.contains(&e.code))
+        .collect()
 }
 
 fn is_void_element(name: &str) -> bool {
     matches!(
         name,
-        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta" | "param" | "source" | "track" | "wbr"
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
     )
 }

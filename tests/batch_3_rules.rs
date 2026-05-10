@@ -92,9 +92,19 @@ use rstest::rstest;
 fn test_batch_3_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
     let config = Config::default();
     let mut output = lint(&config, source);
-    
-    output.retain(|e| ["H014", "T027", "T028", "T034", "J004", "J018", "D004", "D018"].contains(&e.code.as_str()));
-    expected.retain(|e| ["H014", "T027", "T028", "T034", "J004", "J018", "D004", "D018"].contains(&e.code.as_str()));
-    
+
+    output.retain(|e| {
+        [
+            "H014", "T027", "T028", "T034", "J004", "J018", "D004", "D018",
+        ]
+        .contains(&e.code.as_str())
+    });
+    expected.retain(|e| {
+        [
+            "H014", "T027", "T028", "T034", "J004", "J018", "D004", "D018",
+        ]
+        .contains(&e.code.as_str())
+    });
+
     assert_eq!(output, expected);
 }

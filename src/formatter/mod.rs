@@ -17,7 +17,7 @@ pub fn format(config: &Config, source: &str) -> String {
             Token::Comment { raw, .. } => {
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(raw.trim());
-                output.push_str("\n");
+                output.push('\n');
             }
             Token::Tag {
                 name,
@@ -30,35 +30,42 @@ pub fn format(config: &Config, source: &str) -> String {
                     indent_level = indent_level.saturating_sub(1);
                     output.push_str(&" ".repeat(indent_level * config.indent));
                     output.push_str(raw);
-                    output.push_str("\n");
+                    output.push('\n');
                 } else {
                     output.push_str(&" ".repeat(indent_level * config.indent));
-                    
+
                     if raw.len() > config.max_attribute_length && !is_closing {
                         // Reformat tag with wrapped attributes
-                        let formatted_tag = format_tag_with_wrapping(name, raw, *is_self_closing, indent_level, config);
+                        let formatted_tag = format_tag_with_wrapping(
+                            name,
+                            raw,
+                            *is_self_closing,
+                            indent_level,
+                            config,
+                        );
                         output.push_str(&formatted_tag);
                     } else {
                         output.push_str(raw);
                     }
-                    
+
                     // Check if next token is the closing tag for this one
                     if !is_self_closing && i + 1 < tokens.len() {
-                        if let Token::Tag { 
-                            name: next_name, 
-                            is_closing: true, 
-                            .. 
-                        } = &tokens[i+1] {
+                        if let Token::Tag {
+                            name: next_name,
+                            is_closing: true,
+                            ..
+                        } = &tokens[i + 1]
+                        {
                             if next_name == name {
-                                output.push_str(&tokens[i+1].raw());
-                                output.push_str("\n");
+                                output.push_str(tokens[i + 1].raw());
+                                output.push('\n');
                                 i += 2;
                                 continue;
                             }
                         }
                     }
 
-                    output.push_str("\n");
+                    output.push('\n');
                     if !is_self_closing {
                         indent_level += 1;
                     }
@@ -69,22 +76,18 @@ pub fn format(config: &Config, source: &str) -> String {
                 if !trimmed.is_empty() {
                     output.push_str(&" ".repeat(indent_level * config.indent));
                     output.push_str(trimmed);
-                    output.push_str("\n");
+                    output.push('\n');
                 }
             }
             Token::DjangoVar { raw, .. } => {
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(raw);
-                output.push_str("\n");
+                output.push('\n');
             }
             Token::DjangoBlock { raw, .. } => {
                 let tag_name = get_django_tag_name(raw).unwrap_or("");
                 let is_closing = tag_name.starts_with("end");
-                let actual_tag_name = if is_closing {
-                    &tag_name[3..]
-                } else {
-                    tag_name
-                };
+                let actual_tag_name = if is_closing { &tag_name[3..] } else { tag_name };
 
                 let is_block = is_block_tag(actual_tag_name, &config.custom_blocks);
                 let is_reindent = is_reindent_tag(tag_name);
@@ -95,7 +98,7 @@ pub fn format(config: &Config, source: &str) -> String {
 
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(raw);
-                output.push_str("\n");
+                output.push('\n');
 
                 if (!is_closing && is_block) || is_reindent {
                     indent_level += 1;
@@ -108,13 +111,22 @@ pub fn format(config: &Config, source: &str) -> String {
     output
 }
 
-fn format_tag_with_wrapping(name: &str, raw: &str, is_self_closing: bool, indent_level: usize, config: &Config) -> String {
+fn format_tag_with_wrapping(
+    name: &str,
+    raw: &str,
+    is_self_closing: bool,
+    indent_level: usize,
+    config: &Config,
+) -> String {
     // Basic attribute extractor (very simple for now)
     // We expect raw to be like <tag attr="val" attr2="val2">
-    let content = raw.trim_start_matches('<').trim_end_matches('>').trim_end_matches('/');
+    let content = raw
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
     let mut parts = content.split_whitespace();
     let _tag_name = parts.next(); // Skip tag name
-    
+
     let attrs: Vec<&str> = parts.collect();
     if attrs.is_empty() {
         return raw.to_string();
@@ -124,29 +136,26 @@ fn format_tag_with_wrapping(name: &str, raw: &str, is_self_closing: bool, indent
     let attr_indent = " ".repeat((indent_level + 1) * config.indent);
 
     for attr in attrs {
-        formatted.push_str("\n");
+        formatted.push('\n');
         formatted.push_str(&attr_indent);
         formatted.push_str(attr);
     }
 
     if is_self_closing {
-        formatted.push_str("\n");
+        formatted.push('\n');
         formatted.push_str(&" ".repeat(indent_level * config.indent));
         formatted.push_str("/>");
     } else {
-        formatted.push_str("\n");
+        formatted.push('\n');
         formatted.push_str(&" ".repeat(indent_level * config.indent));
-        formatted.push_str(">");
+        formatted.push('>');
     }
 
     formatted
 }
 
 fn get_django_tag_name(raw: &str) -> Option<&str> {
-    raw.trim_start_matches("{%")
-        .trim_start()
-        .split_whitespace()
-        .next()
+    raw.trim_start_matches("{%").split_whitespace().next()
 }
 
 fn is_reindent_tag(name: &str) -> bool {

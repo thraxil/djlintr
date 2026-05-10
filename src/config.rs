@@ -1,6 +1,6 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -16,9 +16,15 @@ pub struct Config {
     pub custom_blocks: Vec<String>,
 }
 
-fn default_indent() -> usize { 4 }
-fn default_max_line_length() -> usize { 120 }
-fn default_max_attribute_length() -> usize { 70 }
+fn default_indent() -> usize {
+    4
+}
+fn default_max_line_length() -> usize {
+    120
+}
+fn default_max_attribute_length() -> usize {
+    70
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -53,7 +59,7 @@ impl Config {
     fn from_pyproject<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let value: serde_json::Value = toml::from_str(&content)?;
-        
+
         // djlint config in pyproject.toml is usually under [tool.djlint]
         if let Some(tool) = value.get("tool") {
             if let Some(djlint) = tool.get("djlint") {

@@ -5,7 +5,10 @@ fn test_django_indentation() {
     let config = Config::default();
     let input = "{% if True %}\n<p>Hello</p>\n{% endif %}";
     let output = format(&config, input);
-    assert_eq!(output, "{% if True %}\n    <p>\n        Hello\n    </p>\n{% endif %}\n");
+    assert_eq!(
+        output,
+        "{% if True %}\n    <p>\n        Hello\n    </p>\n{% endif %}\n"
+    );
 }
 
 #[test]
@@ -30,5 +33,8 @@ fn test_custom_blocks() {
     config.custom_blocks.push("toc".to_string());
     let input = "{% toc %}\n<p>Hello</p>\n{% endtoc %}";
     let output = format(&config, input);
-    assert_eq!(output, "{% toc %}\n    <p>\n        Hello\n    </p>\n{% endtoc %}\n");
+    assert_eq!(
+        output,
+        "{% toc %}\n    <p>\n        Hello\n    </p>\n{% endtoc %}\n"
+    );
 }

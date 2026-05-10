@@ -141,11 +141,21 @@ use rstest::rstest;
 fn test_batch_2_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
     let config = Config::default();
     let mut output = lint(&config, source);
-    
+
     // Ignore rules that we aren't specifically testing here to keep cases clean
-    output.retain(|e| ["H007", "H015", "H016", "H017", "H020", "H030", "H031", "H033", "H035", "H037", "H005"].contains(&e.code.as_str()));
-    expected.retain(|e| ["H007", "H015", "H016", "H017", "H020", "H030", "H031", "H033", "H035", "H037", "H005"].contains(&e.code.as_str()));
-    
+    output.retain(|e| {
+        [
+            "H007", "H015", "H016", "H017", "H020", "H030", "H031", "H033", "H035", "H037", "H005",
+        ]
+        .contains(&e.code.as_str())
+    });
+    expected.retain(|e| {
+        [
+            "H007", "H015", "H016", "H017", "H020", "H030", "H031", "H033", "H035", "H037", "H005",
+        ]
+        .contains(&e.code.as_str())
+    });
+
     // If we aren't testing H020 specifically, filter it out
     if !source.contains("<div></div>") {
         output.retain(|e| e.code != "H020");

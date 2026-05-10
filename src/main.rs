@@ -1,11 +1,11 @@
+use anyhow::Result;
 use clap::Parser;
+use colored::*;
 use djlintr::{config::Config, format, lint, linter::LintError};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use anyhow::Result;
-use colored::*;
-use indicatif::{ProgressBar, ProgressStyle, ParallelProgressIterator};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -72,12 +72,15 @@ fn main() -> Result<()> {
     }
 
     let pb = ProgressBar::new(files.len() as u64);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{prefix:>12.cyan.bold} [{bar:40.cyan/blue}] {pos}/{len} {msg} {elapsed}")?
-        .progress_chars("━> "));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{prefix:>12.cyan.bold} [{bar:40.cyan/blue}] {pos}/{len} {msg} {elapsed}")?
+            .progress_chars("━> "),
+    );
     pb.set_prefix("Linting");
 
-    let results: Vec<Result<FileResult>> = files.par_iter()
+    let results: Vec<Result<FileResult>> = files
+        .par_iter()
         .progress_with(pb.clone())
         .map(|path| process_file(path, &args, &config))
         .collect();
@@ -92,13 +95,16 @@ fn main() -> Result<()> {
             Ok(res) => {
                 if !res.errors.is_empty() || res.reformatted {
                     total_errors += res.errors.len();
-                    if res.reformatted { total_reformatted += 1; }
+                    if res.reformatted {
+                        total_reformatted += 1;
+                    }
 
                     println!("\n{}", res.path.to_string_lossy().bold());
                     println!("{}", "─".repeat(res.path.to_string_lossy().len()).dimmed());
-                    
+
                     for error in res.errors {
-                        println!("{} {:>3}:{:>2} {} {}", 
+                        println!(
+                            "{} {:>3}:{:>2} {} {}",
                             error.code.red().bold(),
                             error.line.to_string().dimmed(),
                             error.column.to_string().dimmed(),
@@ -119,8 +125,12 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("\nLinted {} files, found {} errors.", files.len(), total_errors);
-    
+    println!(
+        "\nLinted {} files, found {} errors.",
+        files.len(),
+        total_errors
+    );
+
     if args.check && (total_errors > 0 || total_reformatted > 0) {
         std::process::exit(1);
     }
@@ -158,7 +168,7 @@ fn process_file(path: &Path, args: &Args, config: &Config) -> Result<FileResult>
     let source = std::fs::read_to_string(path)?;
     let mut reformatted = false;
     let mut errors = Vec::new();
-    
+
     if args.reformat {
         let formatted = format(config, &source);
         if formatted != source {
