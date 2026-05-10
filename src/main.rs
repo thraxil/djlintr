@@ -72,14 +72,11 @@ fn main() -> Result<()> {
 
     let mut total_errors = 0;
     let mut total_reformatted = 0;
-    let mut files_with_issues = 0;
 
     for result in results {
         match result {
             Ok(res) => {
                 if !res.errors.is_empty() || res.reformatted {
-                    files_with_issues += 1;
-                    total_errors += res.errors.is_empty() as usize; // placeholder if no errors but reformatted? No, let's count actual errors.
                     total_errors += res.errors.len();
                     if res.reformatted { total_reformatted += 1; }
 
