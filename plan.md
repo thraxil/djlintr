@@ -90,3 +90,9 @@ The goal of this project is to port the Python tool `djlint` to Rust to improve 
 - [ ] Support multiple template languages (Django, Jinja2, etc.).
 - [x] Implement "Check" mode.
 - [x] Benchmark and optimize.
+
+## Phase 7: CI/CD & Deployment
+
+- [x] Implement GitHub Actions workflow for cross-platform builds.
+- [x] Automate test execution on PRs.
+- [x] Automate binary releases for Linux, macOS, and Windows.
