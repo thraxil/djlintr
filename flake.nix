@@ -24,6 +24,7 @@
             rustToolchain
             pkg-config
             openssl
+            cargo-release
           ];
 
           shellHook = ''
