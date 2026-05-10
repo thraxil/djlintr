@@ -45,8 +45,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     // Batch 3 Regex
     let extra_blank_lines_re = Regex::new(r#"(?m)[^\n]{0,10}\n\s*\n\s*\n"#).unwrap();
-    let spaceless_tags_re =
-        Regex::new(r#"(?i)\b(?:class|id)=['"]\{%\s+(?:if|for).*?%\}.*?['"]"#).unwrap();
+    let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
     // Run whole-source regexes (like extra blank lines)
@@ -222,6 +221,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
                     }
 
+                    let masked_raw = mask_template_tags(raw);
+
                     // Rule T028: Consider using spaceless tags inside attribute values
                     if let Some(m) = spaceless_tags_re.find(raw) {
                         errors.push(LintError {
@@ -245,7 +246,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H010: Attribute names should be lowercase
-                    if let Some(m) = uppercase_attr_re.find(raw) {
+                    if let Some(m) = uppercase_attr_re.find(&masked_raw) {
                         errors.push(LintError {
                             code: "H010".to_string(),
                             line: *line,
@@ -290,7 +291,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H008: Attributes should be double quoted
-                    if let Some(m) = single_quote_attr_re.find(raw) {
+                    if let Some(m) = single_quote_attr_re.find(&masked_raw) {
                         errors.push(LintError {
                             code: "H008".to_string(),
                             line: *line,
@@ -301,7 +302,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H011: Attribute values should be quoted
-                    if let Some(m) = unquoted_attr_re.find(raw) {
+                    if let Some(m) = unquoted_attr_re.find(&masked_raw) {
                         errors.push(LintError {
                             code: "H011".to_string(),
                             line: *line,
@@ -312,7 +313,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H012: There should be no spaces around attribute =
-                    if let Some(m) = space_around_eq_re.find(raw) {
+                    if let Some(m) = space_around_eq_re.find(&masked_raw) {
                         errors.push(LintError {
                             code: "H012".to_string(),
                             line: *line,
@@ -656,6 +657,28 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         .into_iter()
         .filter(|e| !config.ignore.contains(&e.code))
         .collect()
+}
+
+fn mask_template_tags(raw: &str) -> String {
+    let django_block_re = Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap();
+    let django_var_re = Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap();
+
+    let mut masked = raw.to_string();
+
+    for m in django_block_re.find_iter(raw) {
+        let start = m.start();
+        let end = m.end();
+        masked.replace_range(start..end, &"x".repeat(end - start));
+    }
+
+    let current_masked = masked.clone();
+    for m in django_var_re.find_iter(&current_masked) {
+        let start = m.start();
+        let end = m.end();
+        masked.replace_range(start..end, &"x".repeat(end - start));
+    }
+
+    masked
 }
 
 fn is_void_element(name: &str) -> bool {

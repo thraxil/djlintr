@@ -92,6 +92,26 @@ use rstest::rstest;
         }
     ]
 )]
+#[case(
+    "<a class=\"{% if foo == 'bar' %}{% endif %}\">Foo</a>",
+    vec![]
+)]
+#[case(
+    "<a class=\" {% if foo == 'bar' %} \">Foo</a>",
+    vec![
+        LintError {
+            code: "T028".to_string(),
+            line: 1,
+            column: 0,
+            match_str: "class=\" {%".to_string(),
+            message: "Consider using spaceless tags inside attribute values. {%- if/for -%}".to_string(),
+        }
+    ]
+)]
+#[case(
+    "<a href=\"?foo={{ bar }}\">foo</a>",
+    vec![]
+)]
 fn test_django_linter(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
     let config = Config::default();
     let mut output = lint(&config, source);
