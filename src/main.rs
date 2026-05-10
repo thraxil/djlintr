@@ -33,6 +33,10 @@ struct Args {
     /// Return non-zero exit code if issues found
     #[arg(long)]
     check: bool,
+
+    /// Comma-separated list of custom block tags
+    #[arg(long, value_delimiter = ',')]
+    custom_blocks: Option<Vec<String>>,
 }
 
 struct FileResult {
@@ -43,7 +47,11 @@ struct FileResult {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let config = Config::load();
+    let mut config = Config::load();
+
+    if let Some(custom_blocks) = &args.custom_blocks {
+        config.custom_blocks.extend(custom_blocks.clone());
+    }
 
     if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()

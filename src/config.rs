@@ -10,6 +10,8 @@ pub struct Config {
     pub max_line_length: usize,
     #[serde(default)]
     pub ignore: Vec<String>,
+    #[serde(default)]
+    pub custom_blocks: Vec<String>,
 }
 
 fn default_indent() -> usize { 4 }
@@ -21,6 +23,7 @@ impl Default for Config {
             indent: 4,
             max_line_length: 120,
             ignore: Vec::new(),
+            custom_blocks: Vec::new(),
         }
     }
 }

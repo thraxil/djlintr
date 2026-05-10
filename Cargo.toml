@@ -1,6 +1,6 @@
 [package]
 name = "djlintr"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "BSD-3-Clause"
 
@@ -23,3 +23,13 @@ criterion = "0.5"
 [[bench]]
 name = "linter_bench"
 harness = false
+
+[package.metadata.release]
+release = true
+tag = true
+push = true
+pre-release-commit-message = "chore: release v{{version}}"
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+shared-files = ["CHANGELOG.md", "README.md", "LICENSE"]
+consolidate-commits = true

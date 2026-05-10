@@ -31,6 +31,7 @@ djlintr [OPTIONS] <PATHS>...
 * `-e, --extension <EXTENSION>`: File extensions to include (default: `html`).
 * `-t, --threads <THREADS>`: Number of threads to use.
 * `--check`: Return non-zero exit code if issues are found.
+* `--custom-blocks <CUSTOM_BLOCKS>`: Comma-separated list of custom block tags.
 * `-h, --help`: Print help.
 * `-V, --version`: Print version.
 
@@ -42,6 +43,7 @@ djlintr [OPTIONS] <PATHS>...
 * `indent`: Number of spaces for indentation (default: `4`).
 * `max_line_length`: Maximum line length (default: `120`).
 * `ignore`: A list of rule codes to ignore.
+* `custom_blocks`: A list of custom block tags.
 
 #### Example `.djlintrc`
 ```json

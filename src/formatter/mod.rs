@@ -71,10 +71,18 @@ pub fn format(config: &Config, source: &str) -> String {
                 output.push_str("\n");
             }
             Token::DjangoBlock { raw, .. } => {
-                let is_closing = raw.contains("{% end");
-                let is_self_closing = raw.contains("{% extends") || raw.contains("{% include") || raw.contains("{% load") || raw.contains("{% static");
+                let tag_name = get_django_tag_name(raw).unwrap_or("");
+                let is_closing = tag_name.starts_with("end");
+                let actual_tag_name = if is_closing {
+                    &tag_name[3..]
+                } else {
+                    tag_name
+                };
 
-                if is_closing {
+                let is_block = is_block_tag(actual_tag_name, &config.custom_blocks);
+                let is_reindent = is_reindent_tag(tag_name);
+
+                if (is_closing && is_block) || is_reindent {
                     indent_level = indent_level.saturating_sub(1);
                 }
 
@@ -82,7 +90,7 @@ pub fn format(config: &Config, source: &str) -> String {
                 output.push_str(raw);
                 output.push_str("\n");
 
-                if !is_closing && !is_self_closing {
+                if (!is_closing && is_block) || is_reindent {
                     indent_level += 1;
                 }
             }
@@ -91,4 +99,35 @@ pub fn format(config: &Config, source: &str) -> String {
     }
 
     output
+}
+
+fn get_django_tag_name(raw: &str) -> Option<&str> {
+    raw.trim_start_matches("{%")
+        .trim_start()
+        .split_whitespace()
+        .next()
+}
+
+fn is_reindent_tag(name: &str) -> bool {
+    matches!(name, "else" | "elif" | "empty")
+}
+
+fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
+    let blocks = [
+        "block",
+        "if",
+        "for",
+        "with",
+        "autoescape",
+        "filter",
+        "spaceless",
+        "cache",
+        "macro",
+        "call",
+        "set",
+        "localize",
+        "compress",
+        "comment",
+    ];
+    blocks.contains(&name) || custom_blocks.iter().any(|b| b == name)
 }
