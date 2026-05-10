@@ -34,6 +34,10 @@ struct Args {
     #[arg(long)]
     check: bool,
 
+    /// Maximum length for attributes before wrapping
+    #[arg(long, default_value = "70")]
+    max_attribute_length: usize,
+
     /// Comma-separated list of custom block tags
     #[arg(long, value_delimiter = ',')]
     custom_blocks: Option<Vec<String>>,
@@ -48,6 +52,8 @@ struct FileResult {
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut config = Config::load();
+
+    config.max_attribute_length = args.max_attribute_length;
 
     if let Some(custom_blocks) = &args.custom_blocks {
         config.custom_blocks.extend(custom_blocks.clone());

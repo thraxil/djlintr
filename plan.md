@@ -96,3 +96,29 @@ The goal of this project is to port the Python tool `djlint` to Rust to improve 
 - [x] Implement GitHub Actions workflow for cross-platform builds.
 - [x] Automate test execution on PRs.
 - [x] Automate binary releases for Linux, macOS, and Windows.
+
+## Phase 8: Feature Parity (Configuration)
+
+Implement missing configuration options from the original Python `djlint`:
+
+- [ ] **Profile Support**: Support different template languages via `--profile` (`django`, `jinja`, `nunjucks`, `handlebars`, `golang`, `angular`, `html`).
+- [ ] **Include Rules**: Add `--include` to specifically run only certain linter codes.
+- [x] **Advanced Attribute Wrapping**: Implement `--max-attribute-length` (default: 70).
+- [ ] **Gitignore Integration**: Implement `--use-gitignore` to honor `.gitignore` files.
+- [ ] **Embedded Content Formatting**: 
+    - [ ] `--format-css`: Format contents of `<style>` tags.
+    - [ ] `--format-js`: Format contents of `<script>` tags.
+    - [ ] `--indent-css` / `--indent-js`: Specific indentation for embedded content.
+- [ ] **Preservation Options**:
+    - [ ] `--preserve-blank-lines`: Keep existing blank lines.
+    - [ ] `--preserve-leading-space`: Preserve leading space on text.
+- [ ] **Tag Handling**:
+    - [ ] `--close-void-tags`: Add closing marks to void tags (e.g., `<img />`).
+    - [ ] `--ignore-case`: Do not fix the case of known HTML tags.
+- [ ] **Block Handling**:
+    - [ ] `--ignore-blocks`: List of template blocks to skip indenting.
+    - [ ] `--blank-line-after-tag`: Add a blank line after specific tag groups.
+- [ ] **Strictness & Scoping**:
+    - [ ] `--require-pragma`: Only process files containing the `djlint:on` comment.
+    - [ ] `per_file_ignores`: Map specific linter rules to specific files in config.
+- [ ] **Attribute Template Tags**: `--format-attribute-template-tags` to format template syntax inside HTML attributes.

@@ -33,7 +33,14 @@ pub fn format(config: &Config, source: &str) -> String {
                     output.push_str("\n");
                 } else {
                     output.push_str(&" ".repeat(indent_level * config.indent));
-                    output.push_str(raw);
+                    
+                    if raw.len() > config.max_attribute_length && !is_closing {
+                        // Reformat tag with wrapped attributes
+                        let formatted_tag = format_tag_with_wrapping(name, raw, *is_self_closing, indent_level, config);
+                        output.push_str(&formatted_tag);
+                    } else {
+                        output.push_str(raw);
+                    }
                     
                     // Check if next token is the closing tag for this one
                     if !is_self_closing && i + 1 < tokens.len() {
@@ -99,6 +106,40 @@ pub fn format(config: &Config, source: &str) -> String {
     }
 
     output
+}
+
+fn format_tag_with_wrapping(name: &str, raw: &str, is_self_closing: bool, indent_level: usize, config: &Config) -> String {
+    // Basic attribute extractor (very simple for now)
+    // We expect raw to be like <tag attr="val" attr2="val2">
+    let content = raw.trim_start_matches('<').trim_end_matches('>').trim_end_matches('/');
+    let mut parts = content.split_whitespace();
+    let _tag_name = parts.next(); // Skip tag name
+    
+    let attrs: Vec<&str> = parts.collect();
+    if attrs.is_empty() {
+        return raw.to_string();
+    }
+
+    let mut formatted = format!("<{}", name);
+    let attr_indent = " ".repeat((indent_level + 1) * config.indent);
+
+    for attr in attrs {
+        formatted.push_str("\n");
+        formatted.push_str(&attr_indent);
+        formatted.push_str(attr);
+    }
+
+    if is_self_closing {
+        formatted.push_str("\n");
+        formatted.push_str(&" ".repeat(indent_level * config.indent));
+        formatted.push_str("/>");
+    } else {
+        formatted.push_str("\n");
+        formatted.push_str(&" ".repeat(indent_level * config.indent));
+        formatted.push_str(">");
+    }
+
+    formatted
 }
 
 fn get_django_tag_name(raw: &str) -> Option<&str> {
