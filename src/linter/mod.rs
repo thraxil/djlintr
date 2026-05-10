@@ -148,7 +148,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     // Rule H020: Empty tag pair
-                    if !is_self_closing && !is_void_element(&name_lower) && i + 1 < tokens.len() {
+                    if !is_self_closing && !is_void_element(&name_lower) && !matches!(name_lower.as_str(), "th" | "td" | "i" | "span") && i + 1 < tokens.len() {
                         if let Token::Tag { is_closing: true, name: next_name, .. } = &tokens[i+1] {
                             if &next_name.to_lowercase() == &name_lower {
                                 errors.push(LintError {
@@ -444,13 +444,37 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                     let inner = raw.trim_start_matches("{%").trim_end_matches("%}").trim();
                     if inner == "endblock" {
-                        errors.push(LintError {
-                            code: "T003".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
-                        });
+                        // Special case: djlint (Python) allows anonymous endblock if it's a one-liner
+                        // We check if the previous token was on the same line and started with 'block'
+                        let mut is_one_liner = false;
+                        if i > 0 {
+                            for j in (0..i).rev() {
+                                match &tokens[j] {
+                                    Token::DjangoBlock { raw: prev_raw, line: prev_line, .. } => {
+                                        if prev_line == line {
+                                            let prev_inner = prev_raw.trim_start_matches("{%").trim_end_matches("%}").trim();
+                                            if prev_inner.starts_with("block") {
+                                                is_one_liner = true;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                    Token::Text { raw: text_raw, .. } if text_raw.contains('\n') => break,
+                                    Token::Tag { .. } | Token::Comment { .. } | Token::Doctype { .. } | Token::DjangoVar { .. } => {}
+                                    _ => {}
+                                }
+                            }
+                        }
+
+                        if !is_one_liner {
+                            errors.push(LintError {
+                                code: "T003".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
+                            });
+                        }
                     }
                 }
 

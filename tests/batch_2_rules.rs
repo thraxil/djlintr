@@ -80,6 +80,10 @@ use rstest::rstest;
     ]
 )]
 #[case(
+    "<th></th><td></td>",
+    vec![]
+)]
+#[case(
     "<!DOCTYPE html><html lang=\"en\"><head><title>T</title></head><body></body></html>",
     vec![
         LintError {

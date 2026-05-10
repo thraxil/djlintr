@@ -76,6 +76,22 @@ use rstest::rstest;
         }
     ]
 )]
+#[case(
+    "{% block title %}- User Create{% endblock %}",
+    vec![]
+)]
+#[case(
+    "{% block title %}\n- User Create\n{% endblock %}",
+    vec![
+        LintError {
+            code: "T003".to_string(),
+            line: 3,
+            column: 0,
+            match_str: "{% endblock %}".to_string(),
+            message: "Endblock should have name. Ex: {% endblock body %}.".to_string(),
+        }
+    ]
+)]
 fn test_django_linter(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
     let config = Config::default();
     let mut output = lint(&config, source);
