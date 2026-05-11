@@ -50,11 +50,22 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     // Run whole-source regexes (like extra blank lines)
     for cap in extra_blank_lines_re.captures_iter(source) {
+        let mat = cap.get(0).unwrap();
+        let match_str = mat.as_str();
+        let mut line_number = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
+
+        if !match_str
+            .trim_start_matches(|c: char| c == ' ' || c == '\t')
+            .starts_with('\n')
+        {
+            line_number += 1;
+        }
+
         errors.push(LintError {
             code: "H014".to_string(),
-            line: 1, // Approximated
+            line: line_number,
             column: 0,
-            match_str: cap.get(0).unwrap().as_str().to_string(),
+            match_str: match_str.to_string(),
             message: "Found extra blank lines.".to_string(),
         });
     }
