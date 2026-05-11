@@ -57,8 +57,9 @@ djlintr [OPTIONS] <PATHS>...
 ```
 
 #### Example `pyproject.toml`
+`djlintr` supports both `[tool.djlint]` and `[tool.djlintr]` sections.
 ```toml
-[tool.djlint]
+[tool.djlintr]
 indent = 2
 max_line_length = 100
 ignore = ["H006", "T001"]

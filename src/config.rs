@@ -66,13 +66,13 @@ impl Config {
         let content = std::fs::read_to_string(path)?;
         let value: serde_json::Value = toml::from_str(&content)?;
 
-        // djlint config in pyproject.toml is usually under [tool.djlint]
+        // djlint config in pyproject.toml can be under [tool.djlint] or [tool.djlintr]
         if let Some(tool) = value.get("tool") {
-            if let Some(djlint) = tool.get("djlint") {
+            if let Some(djlint) = tool.get("djlintr").or_else(|| tool.get("djlint")) {
                 let config: Config = serde_json::from_value(djlint.clone())?;
                 return Ok(config);
             }
         }
-        anyhow::bail!("No [tool.djlint] section in pyproject.toml")
+        anyhow::bail!("No [tool.djlint] or [tool.djlintr] section in pyproject.toml")
     }
 }
