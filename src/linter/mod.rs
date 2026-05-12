@@ -54,10 +54,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         let match_str = mat.as_str();
         let mut line_number = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
 
-        if !match_str
-            .trim_start_matches(|c: char| c == ' ' || c == '\t')
-            .starts_with('\n')
-        {
+        if !match_str.trim_start_matches([' ', '\t']).starts_with('\n') {
             line_number += 1;
         }
 
