@@ -44,19 +44,19 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let entity_re = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap();
 
     // Batch 3 Regex
-    let extra_blank_lines_re = Regex::new(r#"(?m)[^\n]{0,10}\n\s*\n\s*\n"#).unwrap();
+    let extra_blank_lines_re = Regex::new(r#"\n\s*\n\s*\n"#).unwrap();
     let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
     // Run whole-source regexes (like extra blank lines)
-    for cap in extra_blank_lines_re.captures_iter(source) {
+    // We mask template tags for H014 to avoid flagging blank lines that are
+    // technically "next to" a template tag which might be stripped or handled differently.
+    let masked_source = mask_template_tags(source);
+
+    for cap in extra_blank_lines_re.captures_iter(&masked_source) {
         let mat = cap.get(0).unwrap();
         let match_str = mat.as_str();
-        let mut line_number = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
-
-        if !match_str.trim_start_matches([' ', '\t']).starts_with('\n') {
-            line_number += 1;
-        }
+        let line_number = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
 
         errors.push(LintError {
             code: "H014".to_string(),
