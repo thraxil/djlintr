@@ -606,19 +606,14 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     }
 
     // After all tokens, if any open_tags left, they are orphans
-    if source.to_lowercase().contains("<a>")
-        || source.to_lowercase().contains("<html>")
-        || source.to_lowercase().contains("<div>")
-    {
-        for (tag_name, line, column) in open_tags {
-            errors.push(LintError {
-                code: "H025".to_string(),
-                line,
-                column,
-                match_str: format!("<{}>", tag_name),
-                message: "Tag seems to be an orphan.".to_string(),
-            });
-        }
+    for (tag_name, line, column) in open_tags {
+        errors.push(LintError {
+            code: "H025".to_string(),
+            line,
+            column,
+            match_str: format!("<{}>", tag_name),
+            message: "Tag seems to be an orphan.".to_string(),
+        });
     }
 
     errors.sort_by_key(|e| (e.line, e.column));
