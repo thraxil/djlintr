@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block js %}
+
+
+<script type="text/javascript" src="{% static "js/test.js" %}"></script>
+{% endblock %}
+
+{% block content %}
+
+{% if card %}
+
+		<h1 style="background-color: #{{ card.card.deck.bgcolor }}; color: #{{ card.card.deck.fgcolor }};">{{ card.card.deck.name }}</h1>
+    
+	<div class="row" id="card">
+	    <div class="col-md-12">
+          
+		{% if card.card.front.content %}
+		    <span style="margin: 10px; font-size: {{card.card.front.size}}px">{{ card.card.front.content }}</span>
+        <a class="pull-right btn btn-primary" href="{% url 'card-detail' card.id %}">
+            <span class="glyphicon glyphicon-pencil"></i>
+        </a>
+		{% endif %}
+
+		{% if card.card.front.image %}
+		[image cards are broken right now]
+		{% endif %}
+	</div>
+	</div>
+
+
+
+<div class="row">
+	<div class="col-md-12 btn-group">
+		<a href="#back" class="btn btn-lg btn-block btn-default" id="flip-btn" onclick="flip();return false">flip</a>
+	</div>
+</div>
+
+<br />
+
+<div id="back" class="invisible hero-unit">
+
+    <div class="jumbotron">
+{% if card.card.back.content %}
+    <p>{{ card.card.back.content }}</p>
+{% endif %}
+
+{% if card.card.back.image %}
+[image cards are broken right now]
+{% endif %}
+    </div>
+</div>
+
+<div id="form" class="invisible">
+    <form action="." method="post" id="testform">
+        {% csrf_token %}
+        <input type="hidden" name="card" value="{{ card.id }}" />
+<input type="hidden" name="right" value="" id="right" />
+
+<div class="row">
+	<div class="col-md-6 btn-group">
+		<input type="button" class="btn btn-lg btn-success btn-block" name="rightbutton" value="yes" id="rightbutton"
+       onclick="submitForm('yes')" /></div>
+	<div class="col-md-6 btn-group">
+		<input type="button" class="btn btn-lg btn-danger btn-block" name="wrongbutton" value="no" id="wrongbutton"
+					 onclick="submitForm('no')" />
+	</div>
+</div>
+</form>
+</div>
+
+
+<script type="application/javascript">
+jQuery(function() {
+  jQuery(document).keyup(keyup_handler);
+});
+</script>
+{% else %}
+<p>no due cards and none in your unlearned pool. 
+Your next card is due at {{ first_due.due|date:"D, F j G:i:s" }}. Go read something and
+  come back then.
+</p>
+{% endif %}
+<p id="totaldue">{{ total_due }}</p>
+
+<div id="recenttests">
+<table id="tests" cellpadding="0" cellspacing="0">
+<tr>
+{% for test in recent_tests %}
+{% if test.correct %}
+<td class="True">
+<table cellpadding="0" cellspacing="0">
+<tr>
+<td><div class="spacer new" style="height: {{test.rung_diff}}0px; width: 1px;"></div></td>
+</tr>
+<tr>
+<td><div class="spacer old" style="height: {{test.old_rung}}0px; width: 1px;"></div></td>
+</tr>
+</table>
+</td>
+{% else %}
+<td class="False">
+<div class="spacer" style="height: {{test.old_rung}}0px; width: 1px;"></div>
+</td>
+{% endif %}
+{% endfor %}
+</table>
+</div>
+
+
+{% endblock %}

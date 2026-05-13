@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load bootstrap %}
+
+{% block title %}Musicians{% endblock %}
+
+{% block content %}
+
+    {% if user.is_authenticated %}
+
+    {% if object %}
+<h1>Update Musician:</h1>
+{% else %}
+<h1>Add Musician:</h1>
+{% endif %}
+
+{% if form.has_errors %}
+<h2>Please correct the following error{{ form.errors|pluralize }}:</h2>
+{% endif %}
+
+{% if object %}
+<form method="post" action="{% url 'musician:musician_update' slug=object.slug %}">
+{% else %}
+<form method="post" action=".">
+{% endif %}
+{{form|bootstrap}}
+<input type="submit" />
+</form>
+
+{% if object %}
+<a name="links"></a>
+<h2>Links</h2>
+<form action="{% url 'musician:musician_edit_links' slug=object.slug %}" method="post">
+<table>
+{{ object.links_formset }}
+</table>
+
+<input type="submit" value="edit links" />
+</form>
+
+<a name="photos"></a>
+<h2>Photos</h2>
+
+<form action="{% url 'musician:musician_edit_photos' slug=object.slug %}" method="post" enctype="multipart/form-data">
+<table>
+{{ object.photos_formset }}
+</table>
+
+<input type="submit" value="edit photos" />
+</form>
+
+<a name="gear"></a>
+<h2>Gear</h2>
+
+<form action="{% url 'musician:musician_edit_gear' slug=object.slug %}" method="post">
+<table>
+{{ object.gear_formset }}
+</table>
+
+<input type="submit" value="edit gear" />
+</form>
+
+
+
+<hr />
+<form action="{% url 'musician:musician_delete' slug=object.slug %}" method="post">
+<input type="submit" value="delete" />
+</form>
+
+
+
+{% endif %}
+
+<!--
+This is a lifesaver when debugging!
+<p> {{ form.error_dict }} </p>
+-->
+
+    {% else %}
+    <p>not authenticated</p>
+    {% endif %}
+
+
+{% endblock %}

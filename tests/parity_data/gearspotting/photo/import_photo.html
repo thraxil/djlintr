@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+{% if url %}
+<img src="{{url}}" />
+<br />
+{% endif %}
+
+<form action="." method="post">
+<table>
+<input type="hidden" name="url" value="{{url}}" />
+
+<table>
+{{form.as_table}}
+</table>
+
+Gear:<br />
+<textarea name="gear" rows="5" cols="100"></textarea><br />
+
+Musician(s):<br />
+<textarea name="musicians" rows="5" cols="100"></textarea><br />
+
+<input type="submit" value="import" />
+</table>
+</form>
+
+{% endblock %}

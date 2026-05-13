@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}gear by tags{% endblock %}
+
+{% block content %}
+
+<h1>Tags</h1>
+
+<ul>
+    {% for tag in tags %}
+        <li><a href="{% url 'gear:gear_tag_detail' tag.slug %}">{{tag.name}}</a></li>
+{% endfor %}
+</ul>
+
+{% endblock %}

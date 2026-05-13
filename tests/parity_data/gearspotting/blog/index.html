@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block containerextra %}itemscope itemtype="https://schema.org/Blog"{% endblock %}
+{% block title %}Blog{% endblock %}
+{% block subhead %}<span itemprop="name">Gearspotting Blog</span>{% endblock %}
+
+{% block content %}
+{% if user.is_authenticated %}
+<p class="editlink"><a href="post/">post</a><br />
+{% endif %}
+
+{% for post in posts %}
+<div itemscope itemtype="https://schema.org/BlogPosting">
+<div class="row">
+	<h2 itemprop="name headline"><a itemprop="url" href="{{post.get_absolute_url}}">{{post.title}}</a></h2>
+</div>
+<div class="row muted byline">
+	by <span itemprop="author" itemscope itemtype="https://schema.org/Person">
+    <span itemprop="name">
+			<a itemprop="url" rel="author" href="/accounts/{{post.author.username}}/">{{post.author.username}}</a>
+		</span>
+	</span>
+	<time datetime="{{post.published|date:'c'}}" itemprop="datePublished">{{post.published}}</time>
+</div>
+
+<div itemprop="articleBody">
+{{post.body_html|safe}}
+</div>
+</div>
+{% endfor %}
+
+{% endblock %}

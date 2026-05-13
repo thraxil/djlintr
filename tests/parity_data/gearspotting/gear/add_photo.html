@@ -1,0 +1,7 @@
+<form action="{% url 'gear:gear_add_photo' slug=gear.slug %}"
+method="post" enctype="multipart/form-encoded">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" value="add photo" />
+</form>

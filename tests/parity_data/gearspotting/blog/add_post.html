@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+
+{% block content %}
+{% if request.user.is_authenticated %}
+<form action="." method="post">
+	<fieldset>
+		<legend>Add Blog Post</legend>
+		<label>Title</label>
+		<input type="text" name="title" class="input-block-level" />
+		<label>Text</label>
+		<textarea class="input-block-level" name="body" rows="20"></textarea>
+		<br />
+		<input type="submit" value="post" />
+	</fieldset>
+</form>
+{% else %}
+<p>You must login to post</p>
+{% endif %}
+{% endblock %}

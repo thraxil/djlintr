@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Musiciangear{% endblock %}
+
+{% block content %}
+
+    {% if user.is_authenticated %}
+
+    {% if object %}
+<h1>Update Musiciangear:</h1>
+{% else %}
+<h1>Create Musiciangear:</h1>
+{% endif %}
+
+{% if form.has_errors %}
+<h2>Please correct the following error{{ form.errors|pluralize }}:</h2>
+{% endif %}
+
+<form method="post" action=".">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" />
+</form>
+<!--
+This is a lifesaver when debugging!
+<p> {{ form.error_dict }} </p>
+-->
+{% if object %}
+<a name="links"></a>
+<h2>links</h2>
+<form action="../edit_links/" method="post">
+<table>
+{{ object.links_formset }}
+</table>
+
+<input type="submit" value="edit links" />
+</form>
+
+<a name="photos"></a>
+<h2>photos</h2>
+<form action="../edit_photos/" method="post" enctype="multipart/form-data">
+<table>
+{{ object.photos_formset }}
+</table>
+
+<input type="submit" value="edit photos" />
+</form>
+
+
+<h2>Delete</h2>
+<form action="../delete/" method="post">
+<input type="submit" value="delete this piece of musiciangear" />
+</form>
+{% endif %}
+
+    {% else %}
+    <p>not authenticated</p>
+    {% endif %}
+
+
+{% endblock %}

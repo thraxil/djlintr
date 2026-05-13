@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}{{tag}}{% endblock %}
+{% block subhead %}<a href="{% url 'gear:gear_tags' %}">Tag</a>: {{tag}}{% endblock %}
+
+{% block content %}
+
+{% if gear_list %}
+    <ul>Gear:
+    {% for gt in gear_list %}
+        <li><a href="{{gt.gear.manufacturer.get_absolute_url}}">{{gt.gear.manufacturer.name}}</a> 
+	  <a href="{{ gt.gear.get_absolute_url }}">{{ gt.gear.name }}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No gear available.</p>
+{% endif %}
+
+{% endblock %}

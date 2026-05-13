@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 style="background-color: #{{ deck.bgcolor }}; color: #{{ deck.fgcolor }};">{{ deck.name }}</h2>
+
+<p>
+    Total Cards: {{ deck_total }}<br />
+    Unlearned: {{ deck_unlearned }}<br />
+</p>
+
+<table class="table table-striped table-bordered table-condensed
+							table-hover">
+	<thead>
+		<tr>
+			<th>Front</th>
+			<th>Back</th>
+			<th>Rung</th>
+			<th>Ease</th>
+			<th>Due</th>
+		</tr>
+	</thead>
+	<tbody>
+{% for card in usercards %}
+<tr>
+<td><a href="{{ card.card.get_absolute_url }}">
+{% if card.card.front.content %}
+{{ card.card.front.content }}
+{% endif %}
+{% if card.card.front.image %}
+[image cards are broken right now]
+{% endif %}
+</a></td>
+<td>
+{% if card.card.back.content %}
+{{ card.card.back.content }}
+{% endif %}
+
+{% if card.card.back.image %}
+[image cards are broken right now]
+{% endif %}
+</td>
+<td>{{ card.rung }}</td>
+<td>{{ card.ease }}</td>
+<td>{% if card.rung != -1 %}{{ card.due|date:"D, F j G:i:s" }}{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% endblock %}

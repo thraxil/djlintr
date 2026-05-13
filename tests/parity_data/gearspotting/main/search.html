@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}search results{% endblock %}
+
+{% block content %}
+
+{% if results.gear %}
+
+    <h2>Gear</h2>
+<ul>
+{% for gear in results.gear %}
+<li><a href="{{gear.get_absolute_url}}">{{gear.manufacturer.name}} {{gear.name}}</a></li>
+{% endfor %}
+</ul>
+
+{% endif %}
+{% if results.musicians %}   
+    <h2>Musicians</h2>
+
+
+<ul>
+{% for musician in results.musicians %}
+<li><a href="{{musician.get_absolute_url}}">{{musician.name}}</a></li>
+{% endfor %}
+</ul>
+
+{% endif %}
+
+{% if results.tags %}
+
+{% endif %}
+   
+{% endblock %}

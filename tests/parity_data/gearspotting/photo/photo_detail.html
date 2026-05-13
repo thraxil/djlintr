@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Photo{% endblock %}
+{% block subhead %}Photo{% endblock %}
+
+{% block content %}
+
+<img class="img-rounded" src="{{object.get_1024_src}}" />
+
+<dl class="dl-horizontal">
+{% if object.caption %}
+	<dt>caption</dt>
+	<dd>{{object.caption_html|safe}}</dd>
+{% endif %}
+	<dt>Added</dt>
+	<dd>{{object.added|date}}</dd>
+	<dt>Modified</dt>
+	<dd>{{object.modified|date}}</dd>
+{% if object.source_url %}
+	<dt>Source</dt>
+	<dd><a href="{{object.source_url}}">{{object.source_name|default:object.source_url}}</a></dd>
+{% else %}
+	{% if object.source_name %}
+	<dt>Source</dt>
+	<dd>{{object.source_name}}</dd>
+	{% endif %}
+{% endif %}
+</dl>
+
+{% if object.gear %}
+<div class="row">
+	<div class="span3">
+		<h3>Gear</h3>
+	</div>
+	<div class="span9">
+		<ul>
+			{% for gear in object.gear %}
+			<li><a href="{{gear.manufacturer.get_absolute_url}}">{{gear.manufacturer.name}}</a> <a href="{{gear.get_absolute_url}}">{{gear.name}}</a></li>
+			{% endfor %}
+		</ul>
+	</div>
+</div>
+{% endif %}
+
+{% if object.musicians %}
+<div class="row">
+	<div class="span3">
+		<h3>Musicians</h3>
+	</div>
+	<div class="span9">
+		<ul>
+{% for musician in object.musicians %}
+<li><a href="{{musician.get_absolute_url}}">{{musician.name}}</a></li>
+{% endfor %}
+		</ul>
+	</div>
+</div>
+{% endif %}
+
+{% if object.musiciangear %}
+<div class="row">
+	<div class="span3">
+		<h3>Musician Gear</h3>
+	</div>
+	<div class="span9">
+		<ul>
+{% for musiciangear in object.musiciangear %}
+<li><a href="{{musiciangear.musician.get_absolute_url}}">{{musiciangear.musician.name}}</a> <a href="{{musiciangear.gear.get_absolute_url}}">{{musiciangear.gear.name}}</a></li>
+{% endfor %}
+		</ul>
+	</div>
+</div>
+{% endif %}
+
+{% endblock %}

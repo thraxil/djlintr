@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block containerextra %}itemscope itemtype="https://schema.org/BlogPosting"{% endblock %}
+{% block title %}Blog: {{post.title}}{% endblock %}
+{% block subhead %}<span itemprop="name headline">{{post.title}}{% endblock %}
+
+{% block content %}
+<div class="byline">
+	by <span itemprop="author" itemscope itemtype="https://schema.org/Person">
+    <span itemprop="name">
+			<a itemprop="url" rel="author" href="/accounts/{{post.author.username}}/">{{post.author.username}}</a>
+		</span>
+	</span>
+	@ <time datetime="{{post.published|date:'c'}}" itemprop="datePublished">{{post.published}}</time>
+</div>
+
+<div itemprop="articleBody">
+{{post.body_html|safe}}
+</div>
+
+{% endblock %}

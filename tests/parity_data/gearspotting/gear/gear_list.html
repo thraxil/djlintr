@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Gear{% endblock %}
+{% block subhead %}Gear {% if user.is_authenticated %}
+    (<a href="{% url 'gear:gear_create' %}">+</a>)
+    {% endif %}{% endblock %}
+
+{% block content %}
+
+{% if object_list %}
+    <ul>
+    {% for gear in object_list %}
+        <li><a href="{{gear.manufacturer.get_absolute_url}}">{{gear.manufacturer.name}}</a> <a href="{{ gear.get_absolute_url }}">{{ gear.name }}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No gear available.</p>
+{% endif %}
+
+{% endblock %}

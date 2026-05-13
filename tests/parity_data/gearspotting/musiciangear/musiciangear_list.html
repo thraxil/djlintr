@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Musiciangear{% endblock %}
+
+{% block content %}
+
+    <h1>Musiciangear {% if user.is_authenticated %}
+    (<a href="create/">+</a>)
+    {% endif %}</h1>
+
+    
+
+{% if object_list %}
+    <ul>
+    {% for musiciangear in object_list %}
+        <li><a href="{{ musiciangear.get_absolute_url }}">{{ musiciangear.musician.name }} : {{musiciangear.gear.name}}</a></li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>No musiciangear available.</p>
+{% endif %}
+
+{% endblock %}

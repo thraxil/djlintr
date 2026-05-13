@@ -1,0 +1,7 @@
+<form action="{% url 'musiciangear:musiciangear_add_photo' pk=musiciangear.pk %}"
+method="post" enctype="multipart/form-encoded">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" value="add photo" />
+</form>

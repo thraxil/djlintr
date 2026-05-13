@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block subhead %}Welcome{% endblock %}
+
+{% block content %}
+
+<div class="hero-unit">
+  <h1>Gearspotting.com</h1>
+  <p>Gearspotting.com is a community website for tracking music gear and
+  the musicians that use that gear.</p>
+  {% if request.user.is_anonymous %}
+	<p>This site is built by the community. Feel free
+	to <a href="/accounts/register/">signup</a> and join in.</p>
+	{% endif %}
+</div>
+
+<div class="row">
+<div class="span6">
+<h3>Latest Gear</h3>
+
+<ul>
+  {% for gear in newest_gear %}
+<li><a href="{{gear.manufacturer.get_absolute_url}}">{{gear.manufacturer.name}}</a> <a href="{{ gear.get_absolute_url }}">{{ gear.name }}</a></li>
+  {% endfor %}
+</ul>
+</div>
+
+<div class="span6">
+<h3>Latest Musicians</h3>
+
+   <ul>
+    {% for musician in newest_musicians %}
+<li><a href="{{ musician.get_absolute_url }}">{{ musician.name }}</a></li>
+    {% endfor %}
+    </ul>
+</div>
+
+<div class="span12">
+	<h3>Latest Blog Posts</h3>
+	
+  <ul>
+		{% for post in newest_posts %}
+		<li><a href="{{post.get_absolute_url}}">{{post.title}}</a>
+		[{{post.published}} by <a href="/accounts/{{post.author.username}}/">{{post.author.username}}</a>]</li>
+		{% endfor %}
+	</ul>
+</div>
+
+{% endblock %}

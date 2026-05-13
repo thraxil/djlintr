@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Manufacturers{% endblock %}
+
+{% block content %}
+
+    {% if user.is_authenticated %}
+
+    {% if object %}
+<h1>Update Manufacturer:</h1>
+{% else %}
+<h1>Create Manufacturer:</h1>
+{% endif %}
+
+{% if form.has_errors %}
+<h2>Please correct the following error{{ form.errors|pluralize }}:</h2>
+{% endif %}
+
+<form method="post" action=".">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" />
+</form>
+
+{% if object %}
+<h2>links</h2>
+<form action="../edit_links/" method="post">
+<table>
+{{ object.links_formset }}
+</table>
+
+<input type="submit" value="edit links" />
+</form>
+
+<hr />
+<form action="../delete/" method="post">
+<input type="submit" value="delete" />
+</form>
+{% endif %}
+
+<!--
+This is a lifesaver when debugging!
+<p> {{ form.error_dict }} </p>
+-->
+
+    {% else %}
+    <p>not authenticated</p>
+    {% endif %}
+
+
+{% endblock %}

@@ -1,0 +1,7 @@
+<form action="{% url 'musician:musician_add_link' slug=musician.slug %}"
+method="post">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" value="add link" />
+</form>

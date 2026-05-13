@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Manufacturers{% endblock %}
+
+{% block content %}
+
+    <h1>Manufacturers</h1>
+
+    {% if user.is_authenticated %}
+
+    <form action="." method="post">
+
+      <table>
+	{{add_manufacturer_form.as_table}}
+      </table>
+      <input type="submit" value="add manufacturer" />
+    </form>
+    {% else %}
+
+    {% endif %}
+
+
+{% endblock %}

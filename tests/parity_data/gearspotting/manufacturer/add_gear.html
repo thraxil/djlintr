@@ -1,0 +1,7 @@
+<form action="{% url 'manufacturer:manufacturer_add_gear' slug=manufacturer.slug %}"
+method="post">
+<table>
+{{form.as_table}}
+</table>
+<input type="submit" value="add gear" />
+</form>

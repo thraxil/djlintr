@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}{{object.gear.name}} used by {{object.musician.name}}{% endblock %}
+{% block subhead %}
+<span itemscope itemtype="https://schema.org/Person">
+	<a itemprop="url" href="{{object.musician.get_absolute_url}}">{{object.musician.name}}</a></span>
+    : 
+<span itemscope itemtype="https://schema.org/Product">
+	<a itemprop="url" href="{{object.gear.get_absolute_url}}">{{object.gear.name}}</a></span>{% endblock %}
+
+{% block content %}
+
+<div class="row">
+	<div class="span3">
+    {% if object.musiciangearphoto_set.count %}
+    <img class="img-rounded"
+ src="{{ object.first_photo.get_200_src }}" />
+    {% endif %}
+
+    {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'musiciangear:musiciangear_update' pk=object.pk %}">edit</a>
+<br />
+  <a href="{% url 'musiciangear:musiciangear_add_link' pk=object.pk %}" rel="facebox">add link</a><br />
+  <a href="{% url 'musiciangear:musiciangear_add_photo' pk=object.pk %}" rel="facebox">add photo</a><br />
+</p>{% endif %}
+	</div>
+	<div class="span9">
+		<dl class="dl-horizontal">
+			<dt>Manufacturer</dt>
+			<dd><a href="{{object.gear.manufacturer.get_absolute_url}}">{{object.gear.manufacturer.name}}</a></dd>
+{% if object.description %}
+			<dt>Description</dt>
+			<dd>{{object.description_html|safe}}</dd>
+{% endif %}
+			<dt>Added</dt>
+			<dd>{{object.added|date}}</dd>
+			<dt>Modified</dt>
+			<dd>{{object.modified|date}}</dd>
+		</dl>
+	</div>
+</div>
+
+{% if object.links.count %}
+<div class="row">
+	<div class="span3">
+		<h3>Links</h3>
+    {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'musiciangear:musiciangear_update' pk=object.pk %}#links">edit</a></p>{% endif %}
+	</div>
+	<div class="span9">
+    <ul>
+      {% for link in object.links.all %}
+      <li><a href="{{link.url}}">{{link.title}}</a> {{link.description}}</li>
+      {% endfor %}
+    </ul>
+	</div>
+</div>
+{% endif %}
+
+{% if object.musiciangearphoto_set.count %}
+<div class="row">
+	<div class="span3">
+    <h3>Photos</h3>
+    {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'musiciangear:musiciangear_update' pk=object.pk %}#photos">edit</a></p>{% endif %}
+	</div>
+	<div class="span9">
+    {% for photo in object.musiciangearphoto_set.all %}
+    <a href="{{photo.photo.get_absolute_url}}"
+    title="{{photo.photo.caption}}"><img class="img-polaroid" src="{{ photo.photo.get_100h_src }}" /></a>
+    {% endfor %}
+	</div>
+</div>
+{% endif %}
+
+
+{% endblock %}

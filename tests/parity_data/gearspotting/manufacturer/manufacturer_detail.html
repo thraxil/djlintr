@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Manufacturer: {{object.name}}{% endblock %}
+{% block subhead %}<a href="{% url 'manufacturer:manufacturer_index' %}">Manufacturer</a>: {{object.name}}{% endblock %}
+
+{% block content %}
+
+
+<div class="row">
+	<div class="span3">
+    {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'manufacturer:manufacturer_update' slug=object.slug %}">edit</a><br />
+  <a href="{% url 'manufacturer:manufacturer_add_link' slug=object.slug %}" rel="facebox">add link</a><br />
+  <a href="{% url 'manufacturer:manufacturer_add_gear' slug=object.slug %}" rel="facebox">add gear</a><br />
+    </p>{% endif %}
+	</div>
+	<div class="span9">
+		<dl class="dl-horizontal">
+			<dt>Description</dt>
+			<dd>{{object.description_html|safe}}</dd>
+
+			<dt>Added</dt>
+			<dd>{{object.added|date}}</dd>
+
+			<dt>Modified</dt>
+			<dd>{{object.modified|date}}</dd>
+		</dl>
+	</div>
+</div>
+
+{% if object.links.count %}
+<div class="row">
+	<div class="span3">
+		<h3>Links</h3>
+    {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'manufacturer:manufacturer_update' slug=object.slug %}#links">edit</a></p>{% endif %}
+	</div>
+	<div class="span9">
+    <ul>
+      {% for link in object.links.all %}
+      <li><a href="{{link.url}}">{{link.title}}</a> {{link.description}}</li>
+      {% endfor %}
+    </ul>
+	</div>
+</div>
+{% endif %}
+
+{% if object.gear_set.count %}
+<div class="row">
+	<div class="span3">
+    <h3>Gear</h3>
+	</div>
+	<div class="span9">
+    <ul>
+      {% for gear in object.gear_set.all %}
+      <li><a href="{{gear.get_absolute_url}}">{{gear.name}}</a></li>
+      {% endfor %}
+    </ul>
+	</div>
+</div>
+{% endif %}
+
+
+{% endblock %}

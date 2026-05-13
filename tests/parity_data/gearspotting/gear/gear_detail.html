@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Gear: {{object.manufacturer.name}} {{object.name}}{% endblock %}
+{% block subhead %}<a href="{% url 'gear:gear_index' %}">Gear</a>: <a href="{{object.manufacturer.get_absolute_url}}"><span itemprop="manufacturer">{{object.manufacturer.name}}</span></a>
+<span itemprop="name">{{object.name}}</span>{% endblock %}
+
+{% block containerextra %}itemscope itemtype="https://schema.org/Product"{% endblock %}
+
+{% block content %}
+
+{% if user.is_authenticated %}
+<p class="editlink"><a href="{% url 'gear:gear_update' slug=object.slug %}">edit</a><br />
+  <a href="{% url 'gear:gear_add_link' slug=object.slug %}" rel="facebox">add link</a><br />
+  <a href="{% url 'gear:gear_add_photo' slug=object.slug %}" rel="facebox">add photo</a><br />
+</p>{% endif %}
+
+<div class="row">
+    <div id="mainimage" class="span3">
+        {% if photos %}
+    <img itemprop="image" class="img-rounded"
+ src="{{ photos.0.photo.get_300_src }}" />
+{% endif %}
+    </div>
+<div class="span9">
+<dl class="dl-horizontal">
+    <dt>Manufacturer</dt>
+		<dd><a href="{{object.manufacturer.get_absolute_url}}">{{object.manufacturer.name}}</a></dd>
+
+		<dt>Added</dt>
+		<dd>{{object.added|date}}</dd>
+
+		<dt>Modified</dt>
+		<dd>{{object.modified|date}}</dd>
+
+{% if object.description %}
+		<dt>Description</dt>
+		<dd itemprop="description">{{object.description_html|safe}}</dd>
+{% endif %}
+
+{% if object.geartag_set.count %}
+		<dt>Tags</dt>
+		<dd>
+      {% for gt in object.geartag_set.all %}<a href="{% url 'gear:gear_tag_detail' gt.tag.slug %}">{{gt.tag.name}}</a> {% endfor %}
+		</dd>
+{% endif %}
+
+</dl>
+</div>
+</div>
+
+
+    {% if object.links.count %}
+<div class="row">
+	<div class="span3">
+    <h3>Links</h3>
+      {% if user.is_authenticated %}<p class="editlink"><a href="{% url 'gear:gear_update' slug=object.slug %}#links">edit</a></p>{% endif %}
+	</div>
+	<div class="span9">
+    <dl class="dl-horizontal">
+      {% for link in object.links.all %}
+      <dt><a itemprop="url" href="{{link.url}}">{{link.title}}</a></dt><dd>{{link.description}}</dd>
+      {% endfor %}
+    </dl>
+	</div>
+</div>
+    {% endif %}
+
+    {% if photos %}
+<div class="row">
+	<div class="span3">
+    <h3>Photos</h3>
+		{% if user.is_authenticated %}<p class="editlink"><a href="{% url 'gear:gear_update' slug=object.slug %}#photos">edit</a></p>{% endif %}
+	</div>
+	<div class="span9">
+    {% for photo in photos %}
+    <a href="{{photo.photo.get_absolute_url}}"
+    title="{{photo.photo.caption}}">
+			<img
+				 class="img-polaroid"
+				 src="{{ photo.photo.get_100h_src }}" /></a>
+    {% endfor %}
+	</div>
+</div>
+    {% endif %}
+
+    {% if object.musiciangear_set.count %}
+<div class="row">
+	<div class="span3">
+		<h3>Musicians Using This Gear</h3>
+	</div>
+	<div class="span9">
+		<dl class="dl-horizontal">
+      {% for musiciangear in object.musiciangear_set.all %}
+	<dt><a href="{{musiciangear.get_absolute_url}}">{{musiciangear.musician.name}}</a></dt>
+	<dd>{{musiciangear.description_html|safe}}</dd>
+      {% endfor %}
+	</dl>
+	</div>
+</div>
+    {% endif %}
+
+{% endblock %}
