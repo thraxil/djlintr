@@ -25,6 +25,18 @@ fmt: ## Format code
 clean: ## Remove build artifacts
 	cargo clean
 
+venv: ## Create virtual environment
+	python3 -m venv venv
+	./venv/bin/pip install djlint
+
+install-djlint: venv ## Install python djlint in venv for parity testing
+
+fetch-test-data: ## Fetch external templates for parity testing
+	./scripts/fetch_test_data.sh
+
+compare-lint: ## Compare lint results between djlint and djlintr
+	python3 scripts/compare_lint.py
+
 help: ## Show this help message
 	@echo "Usage: make [target]"
 	@echo ""
