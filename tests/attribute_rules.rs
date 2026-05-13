@@ -20,6 +20,7 @@ use rstest::rstest;
 )]
 fn test_attribute_rules(#[case] source: &str, #[case] expected: Vec<LintError>) {
     let config = Config::default();
-    let output = lint(&config, source);
+    let mut output = lint(&config, source);
+    output.retain(|e| e.code != "H025");
     assert_eq!(output, expected);
 }

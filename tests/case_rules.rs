@@ -30,6 +30,13 @@ use rstest::rstest;
             column: 0,
             match_str: "CLASS=".to_string(),
             message: "Attribute names should be lowercase.".to_string(),
+        },
+        LintError {
+            code: "H025".to_string(),
+            line: 1,
+            column: 0,
+            match_str: "<div>".to_string(),
+            message: "Tag seems to be an orphan.".to_string(),
         }
     ]
 )]

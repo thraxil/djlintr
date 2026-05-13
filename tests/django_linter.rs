@@ -136,7 +136,10 @@ fn test_django_linter(#[case] source: &str, #[case] mut expected: Vec<LintError>
     let mut config = Config::default();
     config.profile = "all".to_string();
     let mut output = lint(&config, source);
-    output.retain(|e| e.code != "H017" && e.code != "J004" && e.code != "J018");
-    expected.retain(|e| e.code != "H017" && e.code != "J004" && e.code != "J018");
+
+    let ignore_codes = ["H025", "H017", "J004", "J018"];
+    output.retain(|e| !ignore_codes.contains(&e.code.as_str()));
+    expected.retain(|e| !ignore_codes.contains(&e.code.as_str()));
+
     assert_eq!(output, expected);
 }
