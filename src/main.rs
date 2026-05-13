@@ -45,6 +45,10 @@ struct Args {
     /// Profile for the template language
     #[arg(short, long)]
     profile: Option<String>,
+
+    /// Consolidate blank lines down to x lines
+    #[arg(long, default_value = "1")]
+    max_blank_lines: usize,
 }
 
 struct FileResult {
@@ -66,6 +70,8 @@ fn main() -> Result<()> {
     if let Some(profile) = &args.profile {
         config.profile = profile.clone();
     }
+
+    config.max_blank_lines = args.max_blank_lines;
 
     if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()

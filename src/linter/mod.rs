@@ -44,7 +44,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let entity_re = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap();
 
     // Batch 3 Regex
-    let extra_blank_lines_re = Regex::new(r#"\n\s*\n\s*\n"#).unwrap();
+    let extra_blank_lines_pattern = format!(r#"\n(?:\s*\n){{{},}}"#, config.max_blank_lines + 1);
+    let extra_blank_lines_re = Regex::new(&extra_blank_lines_pattern).unwrap();
     let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
