@@ -147,7 +147,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     // Parity Rule H037: Duplicate attribute
     // We simulate djlint's broken regex behavior which can jump across tags
     // due to nested quotes in template tags.
-    let attr_start_re = Regex::new(r#"(?i)\s([a-z0-9:-]+)="#).unwrap();
+    // djlint's H037 regex starts with <\w and uses lookahead.
+    let attr_start_re = Regex::new(r#"(?i)\s([a-z-:][a-z-]*?)="#).unwrap();
     let lookahead_item_re = Regex::new(
         r#"(?is)^(?:"[^"]*"|'[^']*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|#[\s\S]*?#|[^'">{}])"#,
     )
@@ -181,8 +182,42 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
+    let is_in_html_tag = |pos: usize| -> Option<usize> {
+        let prefix = &source[..pos];
+        if let Some(last_lt) = prefix.rfind('<') {
+            let after_lt = &prefix[last_lt..];
+            if let Some(first_gt) = after_lt.find('>') {
+                // If there's a '>' between the last '<' and our position, we're not in a tag
+                if last_lt + first_gt < pos {
+                    return None;
+                }
+            }
+            // Check if it's an HTML tag (starts with <\w)
+            if after_lt.len() > 1 {
+                let c = after_lt.chars().nth(1).unwrap();
+                if c.is_alphanumeric() || c == '_' {
+                    return Some(last_lt);
+                }
+            }
+        }
+        None
+    };
+
+    let mut last_flagged_tag_start = None;
     for mat in attr_start_re.find_iter(source) {
         if is_ignored(mat.start(), mat.len(), Some("H037")) {
+            continue;
+        }
+
+        // Parity: djlint requires the attribute to be inside an HTML tag.
+        // It uses <\w[^>]*?\s as a prefix. This prefix does NOT jump.
+        let tag_start = match is_in_html_tag(mat.start()) {
+            Some(pos) => pos,
+            None => continue,
+        };
+
+        // Parity: djlint only reports the first duplicate attribute found in a tag.
+        if Some(tag_start) == last_flagged_tag_start {
             continue;
         }
 
@@ -210,6 +245,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         match_str: attr_name.clone(),
                         message: "Duplicate attribute found.".to_string(),
                     });
+                    last_flagged_tag_start = Some(tag_start);
                     break;
                 }
             }
