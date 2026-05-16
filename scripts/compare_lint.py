@@ -82,6 +82,7 @@ def main():
     print(f"Total errors: djlint={total_djlint}, djlintr={total_djlintr}")
     print("-" * 80)
 
+    discrepancies = 0
     for file in all_files:
         d_errs = djlint_errors.get(file, [])
         dr_errs = djlintr_errors.get(file, [])
@@ -90,6 +91,7 @@ def main():
         dr_codes = sorted([e["code"] for e in dr_errs])
         
         if d_codes != dr_codes:
+            discrepancies += 1
             print(f"FILE: {file}")
             
             # Find missing in djlintr
@@ -114,6 +116,13 @@ def main():
             if extra:
                 print(f"  Extra in djlintr:   {', '.join(extra)}")
             print()
+
+    if discrepancies > 0:
+        print(f"Found {discrepancies} files with discrepancies.")
+        sys.exit(1)
+    else:
+        print("All files match!")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
