@@ -115,14 +115,14 @@ use strict red/green TDD. This means:
 
 - start by adding a simple test case for the new feature or bugfix. pick
   one aspect, happy path, edge case, etc. and focus on that.
-!- (red) run the tests to verify that the new test fails (but other existing
+- (red) run the tests to verify that the new test fails (but other existing
   tests should continue to pass)
-!- implement a simple solution to get the new test passing
-!- (green) run tests again to check that the test now passes (and that all
+- implement a simple solution to get the new test passing
+- (green) run tests again to check that the test now passes (and that all
   other existing tests continue to pass)
-!- refactor the new code to make it cleaner
-!- verify that the tests pass again
-!- repeat this process until you are confident that the entire new
+- refactor the new code to make it cleaner
+- verify that the tests pass again
+- repeat this process until you are confident that the entire new
   feature is implemented, the bug is fixed, etc.
 
 DO NOT delete tests after finishing the process. You MAY run
