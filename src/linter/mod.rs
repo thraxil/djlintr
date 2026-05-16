@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::formatter::tokenizer::{Token, Tokenizer};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LintError {
@@ -92,6 +91,56 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             match_str: match_str.to_string(),
             message: "Found extra blank lines.".to_string(),
         });
+    }
+
+    // Parity Rule H037: Duplicate attribute
+    // We simulate djlint's broken regex behavior which can jump across tags
+    // due to nested quotes in template tags.
+    let attr_start_re = Regex::new(r#"(?i)\s([a-z0-9:-]+)="#).unwrap();
+    let lookahead_item_re = Regex::new(
+        r#"(?is)^(?:"[^"]*"|'[^']*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|#[\s\S]*?#|[^'">{}])"#,
+    )
+    .unwrap();
+
+    for mat in attr_start_re.find_iter(source) {
+        if is_ignored(mat.start(), mat.len()) {
+            continue;
+        }
+        let caps = attr_start_re.captures(mat.as_str()).unwrap();
+        let attr_name = caps.get(1).unwrap().as_str().to_lowercase();
+
+        // Simulating djlint's lookahead: (?==(?:\"[^\"]*\"|'[^']*'|{{(?:(?!}}).)*}}|{%(?:(?!%}).)*%}|{#(?:(?!#}).)*#}|[^'\">{}])*[^-:a-z]\1=[^>]*?>)
+        let mut curr = mat.end();
+        while curr < source.len() {
+            let remaining = &source[curr..];
+
+            // Check for duplicate: [^-:a-z]\1=[^>]*?>
+            // Note: djlint regex requires it to eventually end with > within the same lookahead match.
+            let dup_pattern = format!(r#"(?i)^[^-:a-z]{}="#, regex::escape(&attr_name));
+            if let Some(m) = Regex::new(&dup_pattern).unwrap().find(remaining) {
+                let after_dup = &remaining[m.end()..];
+                if let Some(_tag_end_idx) = after_dup.find('>') {
+                    // Check if there are ANY non-ignored '>' between the duplicate and the tag end.
+                    // Actually, the djlint regex just takes the first '>' it finds.
+                    let line = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
+                    errors.push(LintError {
+                        code: "H037".to_string(),
+                        line,
+                        column: 0, // approximate
+                        match_str: attr_name.clone(),
+                        message: "Duplicate attribute found.".to_string(),
+                    });
+                    break;
+                }
+            }
+
+            // Consume one "item" as defined by djlint regex alternatives
+            if let Some(m) = lookahead_item_re.find(remaining) {
+                curr += m.end();
+            } else {
+                break; // Hit '>' (which is excluded by lookahead_item_re) or EOF
+            }
+        }
     }
 
     let mut i = 0;
@@ -276,22 +325,6 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                 match_str: raw.to_string(),
                                 message: "Extra whitespace found in form action.".to_string(),
                             });
-                        }
-
-                        // Rule H037: Duplicate attribute
-                        let mut seen_attrs = HashSet::new();
-                        for cap in attr_name_re.captures_iter(raw) {
-                            let attr_name = cap.get(1).unwrap().as_str().to_lowercase();
-                            if !seen_attrs.insert(attr_name) {
-                                errors.push(LintError {
-                                    code: "H037".to_string(),
-                                    line: *line,
-                                    column: *column,
-                                    match_str: raw.to_string(),
-                                    message: "Duplicate attribute found.".to_string(),
-                                });
-                                break; // report once per tag to avoid spam
-                            }
                         }
 
                         // Rule T028: Consider using spaceless tags inside attribute values

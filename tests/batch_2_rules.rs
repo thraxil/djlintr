@@ -133,9 +133,9 @@ use rstest::rstest;
             code: "H037".to_string(),
             line: 1,
             column: 0,
-            match_str: "<div class=\"a\" class=\"b\">".to_string(),
+            match_str: "class".to_string(),
             message: "Duplicate attribute found.".to_string(),
-        }
+        },
     ]
 )]
 fn test_batch_2_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
