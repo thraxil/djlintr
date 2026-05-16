@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-16
+
+### Added
+- **Ignored Blocks Logic**: Implemented `ignored_ranges` to skip linting inside `<script>`, `<style>`, `<pre>`, and `<textarea>` tags, as well as HTML comments, matching `djlint`'s behavior.
+- **CLI & Config Alignment**: Added support for `--include` and `--ignore` flags.
+- **New Regression Test Suite**: Added `tests/parity_regressions.rs` covering major fixes and behavioral changes.
+
+### Changed
+- **Tokenizer & Offsets**: Updated the `Tokenizer` to include the byte `offset` for each token, improving lint error location accuracy.
+- **H008 (Double Quotes)**: Restricted to specific attributes (`class`, `id`, `src`, etc.) to match `djlint`.
+- **H010 (Lowercase Attributes)**: Now only checks actual attribute names, ignoring uppercase content within values.
+- **H020 (Empty Tag Pairs)**: Skips whitespace between tags and requires the opening tag to have no attributes.
+- **H025 (Orphan Tags)**: Replaced simple counter with a robust stack-based check for nested orphans.
+- **H014 (Blank Lines)**: Improved masking of template tags before regex matching for better parity.
+- **Default Rules**: Aligned rules disabled by default with `djlint` (`H017`, `H035`, `H036`, `H030`, `H031`).
+
 ## [0.4.1] - 2026-05-12
 
 ### Fixed
