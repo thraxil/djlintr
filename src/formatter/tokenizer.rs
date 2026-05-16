@@ -62,7 +62,10 @@ impl<'a> Tokenizer<'a> {
             pos: 0,
             line: 1,
             column: 0,
-            tag_re: Regex::new(r#"(?i)^</?([a-z0-9:]+)[^>]*>"#).unwrap(),
+            tag_re: Regex::new(
+                r#"(?i)^</?([a-z0-9:]+)(?:"[^"\n]*"|'[^'\n]*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^>])*>"#,
+            )
+            .unwrap(),
             comment_re: Regex::new(r#"(?i)^<!--[\s\S]*?-->"#).unwrap(),
             doctype_re: Regex::new(r#"(?i)^<!DOCTYPE[^>]*>"#).unwrap(),
             django_var_re: Regex::new(r#"^\{\{[\s\S]*?\}\}"#).unwrap(),
