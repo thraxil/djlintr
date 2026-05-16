@@ -168,6 +168,71 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 let raw_lower = raw.to_lowercase();
                 let masked_raw = mask_template_tags(raw);
 
+                // Rule H009: Tag names should be lowercase
+                if !token_is_ignored {
+                    let h009_tags = [
+                        "HTML",
+                        "BODY",
+                        "DIV",
+                        "P",
+                        "SPAN",
+                        "TABLE",
+                        "TR",
+                        "TD",
+                        "TH",
+                        "THEAD",
+                        "TBODY",
+                        "CODE",
+                        "UL",
+                        "OL",
+                        "LI",
+                        "H1",
+                        "H2",
+                        "H3",
+                        "H4",
+                        "H5",
+                        "H6",
+                        "A",
+                        "DD",
+                        "DT",
+                        "BLOCKQUOTE",
+                        "SELECT",
+                        "FORM",
+                        "FIELDSET",
+                        "OPTGROUP",
+                        "LEGEND",
+                        "LABEL",
+                        "HEADER",
+                        "CACHE",
+                        "MAIN",
+                        "ASIDE",
+                        "FOOTER",
+                        "SECTION",
+                        "NAME",
+                        "FIGURE",
+                        "FIGCAPTION",
+                        "VIDEO",
+                        "G",
+                        "SVG",
+                        "BUTTON",
+                        "PATH",
+                        "PICTURE",
+                        "SCRIPT",
+                        "STYLE",
+                        "DETAILS",
+                        "SUMMARY",
+                    ];
+                    if h009_tags.contains(name) {
+                        errors.push(LintError {
+                            code: "H009".to_string(),
+                            line: *line,
+                            column: *column,
+                            match_str: raw.to_string(),
+                            message: "Tag names should be lowercase.".to_string(),
+                        });
+                    }
+                }
+
                 if *is_closing {
                     let mut found = false;
                     for j in (0..open_tags.len()).rev() {
@@ -338,21 +403,14 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             });
                         }
 
-                        // Rule H009: Tag names should be lowercase
-                        if name.chars().any(|c| c.is_uppercase()) {
-                            errors.push(LintError {
-                                code: "H009".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Tag names should be lowercase.".to_string(),
-                            });
-                        }
-
                         // Rule H010: Attribute names should be lowercase
+                        let h010_attrs = [
+                            "CLASS", "ID", "SRC", "WIDTH", "HEIGHT", "ALT", "STYLE", "LANG",
+                            "TITLE", "MEDIA", "SRCSET",
+                        ];
                         for cap in attr_name_re.captures_iter(raw) {
                             let attr_name = cap.get(1).unwrap().as_str();
-                            if attr_name.chars().any(|c| c.is_uppercase()) {
+                            if h010_attrs.contains(&attr_name) {
                                 errors.push(LintError {
                                     code: "H010".to_string(),
                                     line: *line,
