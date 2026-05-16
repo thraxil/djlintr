@@ -51,7 +51,7 @@ Ensure the code adheres to Rust standards. **You MUST NOT consider a task finish
 ```bash
 # Run clippy and check formatting (used in CI)
 make lint
-```
+
 # Apply formatting
 make fmt
 ```
@@ -85,6 +85,7 @@ We use `cargo-release` for managing versions and tags.
 
 2.  **Execute Release:**
     Run `cargo release` to bump the version, create a git tag, and push to the repository.
+    **Note:** `consolidate-commits` must be set to `false` in `Cargo.toml` for `{{version}}` placeholders to render correctly in commit messages.
     ```bash
     # Dry run
     cargo release <patch|minor|major> --execute --dry-run
