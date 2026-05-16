@@ -88,7 +88,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             code: "H014".to_string(),
             line: line_number,
             column: 0,
-            match_str: match_str.to_string(),
+            match_str: match_str.replace('\n', "").to_string(),
             message: "Found extra blank lines.".to_string(),
         });
     }

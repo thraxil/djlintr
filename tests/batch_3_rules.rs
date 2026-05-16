@@ -9,7 +9,7 @@ use rstest::rstest;
             code: "H014".to_string(),
             line: 1,
             column: 0,
-            match_str: "\n\n\n\n".to_string(),
+            match_str: "".to_string(),
             message: "Found extra blank lines.".to_string(),
         }
     ]
