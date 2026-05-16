@@ -56,13 +56,21 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         .find_iter(source)
         .map(|m| (m.start(), m.end()))
         .collect();
-
     let is_ignored = |offset: usize, len: usize| -> bool {
         let end = offset + len;
         ignored_ranges.iter().any(|(istart, iend)| {
-            (offset >= *istart && offset < *iend) || (end > *istart && end <= *iend)
+            (offset >= *istart && offset < *iend) || (end >= *istart && end <= *iend)
         })
     };
+
+    // Parity Hack: djlint regex for H030/H031 matches from the VERY FIRST <html> tag.
+    // If that tag is inside a comment, the whole match is ignored.
+    let mut html_is_ignored = false;
+    if let Some(m) = Regex::new(r#"(?i)<html"#).unwrap().find(source) {
+        if is_ignored(m.start(), m.len()) {
+            html_is_ignored = true;
+        }
+    }
 
     // We mask template tags for H014 to avoid flagging blank lines that are
     // technically "next to" a template tag which might be stripped or handled differently.
@@ -159,8 +167,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
                     }
                 } else {
-                    if !token_is_ignored {
-                        if name_lower == "html" {
+                    if name_lower == "html" && html_tag_pos.is_none() {
+                        if !token_is_ignored {
                             html_tag_pos = Some((*line, *column, raw.to_string()));
                             // Rule H007: DOCTYPE before html
                             if !has_doctype && *line == 1 && *column == 0 {
@@ -174,8 +182,16 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                             .to_string(),
                                 });
                             }
+                        } else {
+                            // Parity Hack: if the first <html> tag is ignored,
+                            // djlint regex matches it and then ignores the whole rule.
+                            // We simulate this by setting a dummy value that prevents further detection
+                            // but isn't reported.
+                            html_tag_pos = Some((0, 0, "IGNORED".to_string()));
                         }
+                    }
 
+                    if !token_is_ignored {
                         if name_lower == "title" {
                             has_title = true;
                         }
@@ -658,32 +674,34 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     // Document-level checks for Batch 2
     if let Some((line, column, match_str)) = html_tag_pos {
-        if !has_title {
-            errors.push(LintError {
-                code: "H016".to_string(),
-                line,
-                column,
-                match_str: match_str.clone(),
-                message: "Missing title tag in html.".to_string(),
-            });
-        }
-        if !has_meta_description {
-            errors.push(LintError {
-                code: "H030".to_string(),
-                line,
-                column,
-                match_str: match_str.clone(),
-                message: "Consider adding a meta description.".to_string(),
-            });
-        }
-        if !has_meta_keywords {
-            errors.push(LintError {
-                code: "H031".to_string(),
-                line,
-                column,
-                match_str: match_str.clone(),
-                message: "Consider adding meta keywords.".to_string(),
-            });
+        if match_str != "IGNORED" && !html_is_ignored {
+            if !has_title {
+                errors.push(LintError {
+                    code: "H016".to_string(),
+                    line,
+                    column,
+                    match_str: match_str.clone(),
+                    message: "Missing title tag in html.".to_string(),
+                });
+            }
+            if !has_meta_description && !match_str.contains("[endif]") {
+                errors.push(LintError {
+                    code: "H030".to_string(),
+                    line,
+                    column,
+                    match_str: match_str.clone(),
+                    message: "Consider adding a meta description.".to_string(),
+                });
+            }
+            if !has_meta_keywords && !match_str.contains("[endif]") {
+                errors.push(LintError {
+                    code: "H031".to_string(),
+                    line,
+                    column,
+                    match_str: match_str.clone(),
+                    message: "Consider adding meta keywords.".to_string(),
+                });
+            }
         }
     }
 
