@@ -35,8 +35,8 @@ struct Args {
     check: bool,
 
     /// Maximum length for attributes before wrapping
-    #[arg(long, default_value = "70")]
-    max_attribute_length: usize,
+    #[arg(long)]
+    max_attribute_length: Option<usize>,
 
     /// Comma-separated list of custom block tags
     #[arg(long, value_delimiter = ',')]
@@ -47,8 +47,8 @@ struct Args {
     profile: Option<String>,
 
     /// Consolidate blank lines down to x lines
-    #[arg(long, default_value = "1")]
-    max_blank_lines: usize,
+    #[arg(long)]
+    max_blank_lines: Option<usize>,
 
     /// Codes to ignore
     #[arg(short, long, value_delimiter = ',')]
@@ -69,7 +69,9 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let mut config = Config::load();
 
-    config.max_attribute_length = args.max_attribute_length;
+    if let Some(max_attribute_length) = args.max_attribute_length {
+        config.max_attribute_length = max_attribute_length;
+    }
 
     if let Some(custom_blocks) = &args.custom_blocks {
         config.custom_blocks.extend(custom_blocks.clone());
@@ -87,7 +89,9 @@ fn main() -> Result<()> {
         config.include.extend(include.clone());
     }
 
-    config.max_blank_lines = args.max_blank_lines;
+    if let Some(max_blank_lines) = args.max_blank_lines {
+        config.max_blank_lines = max_blank_lines;
+    }
 
     if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()

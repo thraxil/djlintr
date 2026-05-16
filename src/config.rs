@@ -1,25 +1,72 @@
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    #[serde(default = "default_indent")]
+    #[serde(default = "default_indent", deserialize_with = "deserialize_usize")]
     pub indent: usize,
-    #[serde(default = "default_max_line_length")]
+    #[serde(
+        default = "default_max_line_length",
+        deserialize_with = "deserialize_usize"
+    )]
     pub max_line_length: usize,
-    #[serde(default = "default_max_attribute_length")]
+    #[serde(
+        default = "default_max_attribute_length",
+        deserialize_with = "deserialize_usize"
+    )]
     pub max_attribute_length: usize,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_string")]
     pub ignore: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_string")]
     pub include: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_string")]
     pub custom_blocks: Vec<String>,
     #[serde(default = "default_profile")]
     pub profile: String,
-    #[serde(default = "default_max_blank_lines")]
+    #[serde(
+        default = "default_max_blank_lines",
+        deserialize_with = "deserialize_usize"
+    )]
     pub max_blank_lines: usize,
+}
+
+fn deserialize_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum IntOrString {
+        Int(usize),
+        String(String),
+    }
+
+    match IntOrString::deserialize(deserializer)? {
+        IntOrString::Int(i) => Ok(i),
+        IntOrString::String(s) => s.parse::<usize>().map_err(serde::de::Error::custom),
+    }
+}
+
+fn deserialize_vec_string<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VecOrString {
+        Vec(Vec<String>),
+        String(String),
+    }
+
+    match VecOrString::deserialize(deserializer)? {
+        VecOrString::Vec(v) => Ok(v),
+        VecOrString::String(s) => Ok(s
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()),
+    }
 }
 
 fn default_indent() -> usize {
@@ -83,5 +130,50 @@ impl Config {
             }
         }
         anyhow::bail!("No [tool.djlint] or [tool.djlintr] section in pyproject.toml")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_load_djlintrc_comma_separated() {
+        let djlintrc = r#"{
+            "custom_blocks": "component,endcomponent",
+            "max_attribute_length": "40",
+            "ignore": "H014,H013"
+        }"#;
+        let path = ".djlintrc_test_json";
+        fs::write(path, djlintrc).unwrap();
+
+        let config = Config::from_file(path);
+        fs::remove_file(path).unwrap();
+
+        assert!(config.is_ok(), "Config loading failed: {:?}", config.err());
+        let config = config.unwrap();
+        assert_eq!(config.custom_blocks, vec!["component", "endcomponent"]);
+        assert_eq!(config.max_attribute_length, 40);
+        assert_eq!(config.ignore, vec!["H014", "H013"]);
+    }
+
+    #[test]
+    fn test_load_pyproject_toml() {
+        let pyproject = r#"
+[tool.djlint]
+ignore = "H014,H013"
+max_attribute_length = 40
+"#;
+        let path = "pyproject.toml_test";
+        fs::write(path, pyproject).unwrap();
+
+        let config = Config::from_pyproject(path);
+        fs::remove_file(path).unwrap();
+
+        assert!(config.is_ok(), "Config loading failed: {:?}", config.err());
+        let config = config.unwrap();
+        assert_eq!(config.ignore, vec!["H014", "H013"]);
+        assert_eq!(config.max_attribute_length, 40);
     }
 }
