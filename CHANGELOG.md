@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-16
+
+### Fixed
+- **100% Parity Reached**: Reproduced a specific `djlint` regex quirk for `H037` (duplicate attributes) that allowed it to jump across tags when nested quotes are present in template tags.
+- **H014 (Blank Lines)**: Refined regex and ignored-block logic to match `djlint` exactly.
+- **H030/H031 (Document Rules)**: Implemented a "commented out html" parity hack to match `djlint`'s document-level rule suppression.
+
 ## [0.5.0] - 2026-05-16
 
 ### Added
