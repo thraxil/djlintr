@@ -1,26 +1,6 @@
         {# djlint:off #}
         <div class="flex sticky top-0 z-10 gap-4 items-center py-4 bg-primary1"
-             x-data="{
-               hasChanges: false,
-               hasActiveFilters: {% if selected_teams or selected_repos %}true{% elif created_from_value and created_from_value != '90_days_ago' %}true{% else %}false{% endif %},
-               checkForChanges() {
-                 const form = document.getElementById('detail-filters-form');
-                 const formData = new FormData(form);
-                 const teams = formData.getAll('teams');
-                 const repos = formData.getAll('repos');
-                 const createdFrom = formData.get('created_from') || '';
-                 const currentTeams = JSON.parse(document.getElementById('detail-selected-teams').textContent) || [];
-                 const currentRepos = JSON.parse(document.getElementById('detail-selected-repos').textContent) || [];
-                 const currentCreatedFrom = JSON.parse(document.getElementById('detail-created-from').textContent) || '';
-                 const arraysEqual = (a, b) => {
-                   if (a.length !== b.length) return false;
-                   const sortedA = [...a].sort();
-                   const sortedB = [...b].sort();
-                   return sortedA.every((val, idx) => val === sortedB[idx]);
-                 };
-                 this.hasChanges = !arraysEqual(teams, currentTeams) || !arraysEqual(repos, currentRepos) || createdFrom !== currentCreatedFrom;
-               }
-             }"
+             invalid
              x-init="$nextTick(() => checkForChanges())"
              @change="checkForChanges()">
         {# djlint:on #}

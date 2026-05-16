@@ -88,16 +88,26 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let is_ignored = |offset: usize, len: usize, code: Option<&str>| -> bool {
         let end = offset + len;
         ignored_ranges.iter().any(|ir| {
-            let overlaps = offset < ir.end && end > ir.start;
-            if overlaps {
+            let matches_code = if ir.rules.is_empty() {
+                true
+            } else if let Some(c) = code {
+                ir.rules.iter().any(|r| r == c)
+            } else {
+                false
+            };
+
+            if matches_code {
                 if ir.rules.is_empty() {
-                    return true;
+                    // For general ignores (like comments/script), use the stricter check
+                    // that matches djlint's behavior: match must start BEFORE the end of the ignored block.
+                    (offset >= ir.start && offset < ir.end) || (end >= ir.start && end <= ir.end)
+                } else {
+                    // For djlint:off blocks, use overlap
+                    offset < ir.end && end > ir.start
                 }
-                if let Some(c) = code {
-                    return ir.rules.iter().any(|r| r == c);
-                }
+            } else {
+                false
             }
-            false
         })
     };
 
