@@ -141,4 +141,24 @@ mod tests {
             "H017 should be enabled when included"
         );
     }
+
+    #[test]
+    fn test_h012_alpine_syntax_parity() {
+        // H012 should not trigger for '=' inside attribute values (e.g. Alpine.js)
+        let html = r#"<button @click="isOpen = !isOpen"></button>"#;
+        let config = Config::default();
+        let errors = lint(&config, html);
+        let h012_errors: Vec<_> = errors.iter().filter(|e| e.code == "H012").collect();
+        assert!(
+            h012_errors.is_empty(),
+            "H012 should not flag '=' inside quotes. Found: {:?}",
+            h012_errors
+        );
+
+        // Should still flag real violations
+        let html_bad = r#"<div class = "foo"></div>"#;
+        let errors = lint(&config, html_bad);
+        let h012_errors: Vec<_> = errors.iter().filter(|e| e.code == "H012").collect();
+        assert_eq!(h012_errors.len(), 1, "Should flag space before =");
+    }
 }

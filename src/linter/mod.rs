@@ -24,7 +24,9 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     // Batch 1 Rules Regex
     let unquoted_attr_re = Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap();
-    let space_around_eq_re = Regex::new(r#"\b[a-zA-Z0-9:-]+\s+=|=\s+["'{a-zA-Z0-9]"#).unwrap();
+    let space_around_eq_re =
+        Regex::new(r#"(?i)(?:\b|[a-z0-9:@\.-])[a-z0-9:@\.-]*\s+=|=\s+["'{a-z0-9]"#).unwrap();
+    let quote_re = Regex::new(r#""[^"]*"|'[^']*'"#).unwrap();
     let js_link_re = Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap();
     let inline_style_re = Regex::new(r#"(?i)\bstyle=["']"#).unwrap();
     let http_link_re = Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap();
@@ -486,7 +488,23 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
 
                         // Rule H012: There should be no spaces around attribute =
-                        if let Some(m) = space_around_eq_re.find(&masked_raw) {
+                        for m in space_around_eq_re.find_iter(&masked_raw) {
+                            let match_start = m.start();
+                            let match_end = m.end();
+
+                            // Check if this match is inside quotes
+                            let mut is_inside_quotes = false;
+                            for qm in quote_re.find_iter(&masked_raw) {
+                                if match_start >= qm.start() && match_end <= qm.end() {
+                                    is_inside_quotes = true;
+                                    break;
+                                }
+                            }
+
+                            if is_inside_quotes {
+                                continue;
+                            }
+
                             let attr_content = &raw[m.start()..m.end()];
                             // djlint ignores attributes that contain template tags
                             if !attr_content.contains("{{") && !attr_content.contains("{%") {

@@ -46,12 +46,12 @@ cargo test --test <test_name>
 
 ### Linting and Formatting
 
-Ensure the code adheres to Rust standards.
+Ensure the code adheres to Rust standards. **You MUST NOT consider a task finished until `make lint` passes.**
 
 ```bash
 # Run clippy and check formatting (used in CI)
 make lint
-
+```
 # Apply formatting
 make fmt
 ```
