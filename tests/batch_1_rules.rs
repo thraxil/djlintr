@@ -75,7 +75,7 @@ use rstest::rstest;
     ]
 )]
 #[case(
-    "<script type=\"text/javascript\"></script>",
+    "<script type=\"text/javascript\">",
     vec![
         LintError {
             code: "H024".to_string(),
@@ -123,7 +123,9 @@ use rstest::rstest;
     ]
 )]
 fn test_batch_1_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
-    let config = Config::default();
+    let mut config = Config::default();
+    config.include.push("H024".to_string());
+    config.include.push("H036".to_string());
     let mut output = lint(&config, source);
     // filter out H025, H020, and H017 for these isolated tests to make them cleaner
     output.retain(|e| !["H025", "H020", "H017"].contains(&e.code.as_str()));

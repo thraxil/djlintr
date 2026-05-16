@@ -139,7 +139,11 @@ use rstest::rstest;
     ]
 )]
 fn test_batch_2_rules(#[case] source: &str, #[case] mut expected: Vec<LintError>) {
-    let config = Config::default();
+    let mut config = Config::default();
+    config.include.push("H017".to_string());
+    config.include.push("H030".to_string());
+    config.include.push("H031".to_string());
+    config.include.push("H035".to_string());
     let mut output = lint(&config, source);
 
     // Ignore rules that we aren't specifically testing here to keep cases clean

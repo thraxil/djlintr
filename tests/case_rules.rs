@@ -28,7 +28,7 @@ use rstest::rstest;
             code: "H010".to_string(),
             line: 1,
             column: 0,
-            match_str: "CLASS=".to_string(),
+            match_str: "CLASS".to_string(),
             message: "Attribute names should be lowercase.".to_string(),
         },
         LintError {

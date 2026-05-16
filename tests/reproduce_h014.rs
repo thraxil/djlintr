@@ -18,22 +18,17 @@ mod tests {
     }
 
     #[test]
-    fn test_h014_configurable_sensitivity() {
-        let html = "<div></div>\n\n<div></div>";
-        let mut config = Config::default();
-
-        // Default max_blank_lines is 1, so 1 blank line (2 newlines) is NOT flagged
+    fn test_h014_real_behavior() {
+        // djlint only flags if there are at least 3 newlines (2 blank lines)
+        let html = "line1\n\nline2"; // 1 blank line
+        let config = Config::default();
         let errors = lint(&config, html);
         let h014_errors: Vec<_> = errors.iter().filter(|e| e.code == "H014").collect();
-        assert!(h014_errors.is_empty());
+        assert!(h014_errors.is_empty(), "Should NOT detect 1 blank line");
 
-        // Set max_blank_lines to 0, now any blank line IS flagged
-        config.max_blank_lines = 0;
+        let html = "line1\n\n\nline2"; // 2 blank lines
         let errors = lint(&config, html);
         let h014_errors: Vec<_> = errors.iter().filter(|e| e.code == "H014").collect();
-        assert!(
-            !h014_errors.is_empty(),
-            "Should detect 1 blank line when max_blank_lines is 0"
-        );
+        assert!(!h014_errors.is_empty(), "Should detect 2 blank lines");
     }
 }

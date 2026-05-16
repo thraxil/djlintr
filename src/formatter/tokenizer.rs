@@ -9,31 +9,37 @@ pub enum Token<'a> {
         is_self_closing: bool,
         line: usize,
         column: usize,
+        offset: usize,
     },
     Comment {
         raw: &'a str,
         line: usize,
         column: usize,
+        offset: usize,
     },
     Text {
         raw: &'a str,
         line: usize,
         column: usize,
+        offset: usize,
     },
     Doctype {
         raw: &'a str,
         line: usize,
         column: usize,
+        offset: usize,
     },
     DjangoVar {
         raw: &'a str,
         line: usize,
         column: usize,
+        offset: usize,
     },
     DjangoBlock {
         raw: &'a str,
         line: usize,
         column: usize,
+        offset: usize,
     },
 }
 
@@ -89,6 +95,7 @@ impl<'a> Iterator for Tokenizer<'a> {
         let remaining = &self.source[self.pos..];
         let current_line = self.line;
         let current_column = self.column;
+        let current_offset = self.pos;
 
         if let Some(m) = self.comment_re.find(remaining) {
             let raw = m.as_str();
@@ -97,6 +104,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 raw,
                 line: current_line,
                 column: current_column,
+                offset: current_offset,
             });
         }
 
@@ -107,6 +115,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 raw,
                 line: current_line,
                 column: current_column,
+                offset: current_offset,
             });
         }
 
@@ -117,6 +126,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 raw,
                 line: current_line,
                 column: current_column,
+                offset: current_offset,
             });
         }
 
@@ -127,6 +137,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                 raw,
                 line: current_line,
                 column: current_column,
+                offset: current_offset,
             });
         }
 
@@ -145,13 +156,18 @@ impl<'a> Iterator for Tokenizer<'a> {
                 is_self_closing,
                 line: current_line,
                 column: current_column,
+                offset: current_offset,
             });
         }
 
         // If no match, it's text until the next '<' or '{'
         let mut next_stop = remaining.len();
         for (i, c) in remaining.char_indices() {
-            if i > 0 && (c == '<' || c == '{') {
+            if i > 0
+                && (c == '<'
+                    || (c == '{'
+                        && (remaining[i..].starts_with("{{") || remaining[i..].starts_with("{%"))))
+            {
                 next_stop = i;
                 break;
             }
@@ -163,6 +179,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             raw,
             line: current_line,
             column: current_column,
+            offset: current_offset,
         })
     }
 }
@@ -196,6 +213,39 @@ impl<'a> Token<'a> {
             Token::Doctype { raw, .. } => raw,
             Token::DjangoVar { raw, .. } => raw,
             Token::DjangoBlock { raw, .. } => raw,
+        }
+    }
+
+    pub fn line(&self) -> usize {
+        match self {
+            Token::Tag { line, .. } => *line,
+            Token::Comment { line, .. } => *line,
+            Token::Text { line, .. } => *line,
+            Token::Doctype { line, .. } => *line,
+            Token::DjangoVar { line, .. } => *line,
+            Token::DjangoBlock { line, .. } => *line,
+        }
+    }
+
+    pub fn column(&self) -> usize {
+        match self {
+            Token::Tag { column, .. } => *column,
+            Token::Comment { column, .. } => *column,
+            Token::Text { column, .. } => *column,
+            Token::Doctype { column, .. } => *column,
+            Token::DjangoVar { column, .. } => *column,
+            Token::DjangoBlock { column, .. } => *column,
+        }
+    }
+
+    pub fn offset(&self) -> usize {
+        match self {
+            Token::Tag { offset, .. } => *offset,
+            Token::Comment { offset, .. } => *offset,
+            Token::Text { offset, .. } => *offset,
+            Token::Doctype { offset, .. } => *offset,
+            Token::DjangoVar { offset, .. } => *offset,
+            Token::DjangoBlock { offset, .. } => *offset,
         }
     }
 }

@@ -13,6 +13,8 @@ pub struct Config {
     #[serde(default)]
     pub ignore: Vec<String>,
     #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
     pub custom_blocks: Vec<String>,
     #[serde(default = "default_profile")]
     pub profile: String,
@@ -43,6 +45,7 @@ impl Default for Config {
             max_line_length: 120,
             max_attribute_length: 70,
             ignore: Vec::new(),
+            include: Vec::new(),
             custom_blocks: Vec::new(),
             profile: "html".to_string(),
             max_blank_lines: 1,

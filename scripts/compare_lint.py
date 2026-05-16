@@ -4,6 +4,10 @@ import re
 import sys
 from collections import defaultdict
 
+def strip_ansi(text):
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
 def run_djlint(path):
     cmd = ["./venv/bin/djlint", "--lint", path]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -20,6 +24,7 @@ def parse_djlint_output(output):
     current_file = None
     lines = output.splitlines()
     for line in lines:
+        line = strip_ansi(line)
         if line.startswith("tests/parity_data/"):
             current_file = line.strip()
         elif re.match(r"^[A-Z]\d{3}\s+\d+:\d+", line.strip()):
@@ -41,6 +46,7 @@ def parse_djlintr_output(output):
     current_file = None
     lines = output.splitlines()
     for line in lines:
+        line = strip_ansi(line)
         if line.startswith("tests/parity_data/"):
             current_file = line.strip()
         elif re.match(r"^[A-Z]\d{3}\s+\d+:\s*\d+", line.strip()):

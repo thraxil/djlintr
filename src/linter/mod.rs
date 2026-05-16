@@ -18,8 +18,10 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let tokens: Vec<Token> = Tokenizer::new(source).collect();
 
     let mut open_tags: Vec<(String, usize, usize)> = Vec::new();
-    let single_quote_attr_re = Regex::new(r#"\s+[a-zA-Z0-9:-]+='[^']*'"#).unwrap();
-    let uppercase_attr_re = Regex::new(r#"\b[A-Z0-9:-]+="#).unwrap();
+    let single_quote_attr_re = Regex::new(
+        r#"(?i)\b(?:class|id|src|width|height|alt|style|lang|title|srcset|media)='[^']*'"#,
+    )
+    .unwrap();
 
     // Batch 1 Rules Regex
     let unquoted_attr_re = Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap();
@@ -44,18 +46,34 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let entity_re = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap();
 
     // Batch 3 Regex
-    let extra_blank_lines_pattern = format!(r#"\n(?:\s*\n){{{},}}"#, config.max_blank_lines + 1);
+    let extra_blank_lines_pattern = r#"[^\n]{0,10}\n{3,}"#.to_string();
     let extra_blank_lines_re = Regex::new(&extra_blank_lines_pattern).unwrap();
     let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
     let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
 
-    // Run whole-source regexes (like extra blank lines)
+    let ignored_blocks_re = Regex::new(r#"(?is)<script.*?</script>|<style.*?</style>|<pre.*?</pre>|<textarea.*?</textarea>|<!--.*?-->"#).unwrap();
+    let ignored_ranges: Vec<(usize, usize)> = ignored_blocks_re
+        .find_iter(source)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+
+    let is_ignored = |offset: usize, len: usize| -> bool {
+        let end = offset + len;
+        ignored_ranges.iter().any(|(istart, iend)| {
+            (offset >= *istart && offset < *iend) || (end > *istart && end <= *iend)
+        })
+    };
+
     // We mask template tags for H014 to avoid flagging blank lines that are
     // technically "next to" a template tag which might be stripped or handled differently.
     let masked_source = mask_template_tags(source);
 
+    // Run whole-source regexes (like extra blank lines)
     for cap in extra_blank_lines_re.captures_iter(&masked_source) {
         let mat = cap.get(0).unwrap();
+        if is_ignored(mat.start(), mat.len()) {
+            continue;
+        }
         let match_str = mat.as_str();
         let line_number = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
 
@@ -71,8 +89,13 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let mut i = 0;
     while i < tokens.len() {
         let token = &tokens[i];
+        let token_offset = token.offset();
+        let token_len = token.raw().len();
+
+        let token_is_ignored = is_ignored(token_offset, token_len);
+
         match token {
-            Token::Doctype { .. } => {
+            Token::Doctype { .. } if !token_is_ignored => {
                 has_doctype = true;
             }
             Token::Tag {
@@ -82,16 +105,22 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 is_self_closing,
                 line,
                 column,
+                offset: _,
             } => {
                 let name_lower = name.to_lowercase();
                 let raw_lower = raw.to_lowercase();
+                let masked_raw = mask_template_tags(raw);
 
                 if *is_closing {
-                    if let Some(last_open) = open_tags.pop() {
-                        if &last_open.0 != name {
-                            // Mismatched tags
+                    let mut found = false;
+                    for j in (0..open_tags.len()).rev() {
+                        if open_tags[j].0 == name_lower {
+                            open_tags.remove(j);
+                            found = true;
+                            break;
                         }
-                    } else {
+                    }
+                    if !found && !token_is_ignored {
                         errors.push(LintError {
                             code: "H025".to_string(),
                             line: *line,
@@ -99,6 +128,11 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             match_str: raw.to_string(),
                             message: "Tag seems to be an orphan.".to_string(),
                         });
+                    }
+
+                    if token_is_ignored {
+                        i += 1;
+                        continue;
                     }
 
                     // Rule H015: Follow h tags with a line break
@@ -125,352 +159,395 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
                     }
                 } else {
-                    if name_lower == "html" {
-                        html_tag_pos = Some((*line, *column, raw.to_string()));
-                        // Rule H007: DOCTYPE before html
-                        if !has_doctype {
-                            errors.push(LintError {
-                                code: "H007".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "<!DOCTYPE ... > should be present before the html tag."
-                                    .to_string(),
-                            });
-                        }
-                    }
-
-                    if name_lower == "title" {
-                        has_title = true;
-                    }
-                    if name_lower == "meta" {
-                        if raw_lower.contains("name=\"description\"")
-                            || raw_lower.contains("name='description'")
-                        {
-                            has_meta_description = true;
-                        }
-                        if raw_lower.contains("name=\"keywords\"")
-                            || raw_lower.contains("name='keywords'")
-                        {
-                            has_meta_keywords = true;
-                        }
-
-                        // Rule H035: Meta tags should be self closing
-                        if !raw.ends_with("/>") {
-                            errors.push(LintError {
-                                code: "H035".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Meta tags should be self closing.".to_string(),
-                            });
-                        }
-                    }
-
-                    // Rule H017: Void tags self closing (excluding meta for H035)
-                    if is_void_element(&name_lower) && name_lower != "meta" && !raw.ends_with("/>")
-                    {
-                        errors.push(LintError {
-                            code: "H017".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Void tags should be self closing.".to_string(),
-                        });
-                    }
-
-                    // Rule H020: Empty tag pair
-                    if !is_self_closing
-                        && !is_void_element(&name_lower)
-                        && !matches!(name_lower.as_str(), "th" | "td" | "i" | "span")
-                        && i + 1 < tokens.len()
-                    {
-                        if let Token::Tag {
-                            is_closing: true,
-                            name: next_name,
-                            ..
-                        } = &tokens[i + 1]
-                        {
-                            if next_name.to_lowercase() == name_lower {
+                    if !token_is_ignored {
+                        if name_lower == "html" {
+                            html_tag_pos = Some((*line, *column, raw.to_string()));
+                            // Rule H007: DOCTYPE before html
+                            if !has_doctype && *line == 1 && *column == 0 {
                                 errors.push(LintError {
-                                    code: "H020".to_string(),
+                                    code: "H007".to_string(),
                                     line: *line,
                                     column: *column,
                                     match_str: raw.to_string(),
-                                    message: "Empty tag pair found. Consider removing.".to_string(),
+                                    message:
+                                        "<!DOCTYPE ... > should be present before the html tag."
+                                            .to_string(),
                                 });
                             }
                         }
-                    }
 
-                    // Rule H033: Form action whitespace
-                    if name_lower == "form" && form_action_ws_re.is_match(raw) {
-                        errors.push(LintError {
-                            code: "H033".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Extra whitespace found in form action.".to_string(),
-                        });
-                    }
-
-                    // Rule H037: Duplicate attribute
-                    let mut seen_attrs = HashSet::new();
-                    for cap in attr_name_re.captures_iter(raw) {
-                        let attr_name = cap.get(1).unwrap().as_str().to_lowercase();
-                        if !seen_attrs.insert(attr_name) {
-                            errors.push(LintError {
-                                code: "H037".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Duplicate attribute found.".to_string(),
-                            });
-                            break; // report once per tag to avoid spam
+                        if name_lower == "title" {
+                            has_title = true;
                         }
-                    }
+                        if name_lower == "meta" {
+                            if raw_lower.contains("name=\"description\"")
+                                || raw_lower.contains("name='description'")
+                            {
+                                has_meta_description = true;
+                            }
+                            if raw_lower.contains("name=\"keywords\"")
+                                || raw_lower.contains("name='keywords'")
+                            {
+                                has_meta_keywords = true;
+                            }
 
-                    let masked_raw = mask_template_tags(raw);
-
-                    // Rule T028: Consider using spaceless tags inside attribute values
-                    if let Some(m) = spaceless_tags_re.find(raw) {
-                        errors.push(LintError {
-                            code: "T028".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Consider using spaceless tags inside attribute values. {%- if/for -%}".to_string(),
-                        });
-                    }
-
-                    // Rule H009: Tag names should be lowercase
-                    if name.chars().any(|c| c.is_uppercase()) {
-                        errors.push(LintError {
-                            code: "H009".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Tag names should be lowercase.".to_string(),
-                        });
-                    }
-
-                    // Rule H010: Attribute names should be lowercase
-                    if let Some(m) = uppercase_attr_re.find(&masked_raw) {
-                        errors.push(LintError {
-                            code: "H010".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Attribute names should be lowercase.".to_string(),
-                        });
-                    }
-
-                    // Rule H005: lang attribute on html tag
-                    if name_lower == "html" && !raw_lower.contains("lang=") {
-                        errors.push(LintError {
-                            code: "H005".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Html tag should have lang attribute.".to_string(),
-                        });
-                    }
-
-                    // Rule H006 & H013: img height, width, and alt
-                    if name_lower == "img" {
-                        if !raw_lower.contains("height=") || !raw_lower.contains("width=") {
-                            errors.push(LintError {
-                                code: "H006".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Img tag should have height and width attributes."
-                                    .to_string(),
-                            });
-                        }
-                        if !raw_lower.contains("alt=") {
-                            errors.push(LintError {
-                                code: "H013".to_string(),
-                                line: *line,
-                                column: *column,
-                                match_str: raw.to_string(),
-                                message: "Img tag should have an alt attribute.".to_string(),
-                            });
-                        }
-                    }
-
-                    // Rule H008: Attributes should be double quoted
-                    if let Some(m) = single_quote_attr_re.find(&masked_raw) {
-                        errors.push(LintError {
-                            code: "H008".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw[..m.end()].to_string(),
-                            message: "Attributes should be double quoted.".to_string(),
-                        });
-                    }
-
-                    // Rule H011: Attribute values should be quoted
-                    if let Some(m) = unquoted_attr_re.find(&masked_raw) {
-                        errors.push(LintError {
-                            code: "H011".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Attribute values should be quoted.".to_string(),
-                        });
-                    }
-
-                    // Rule H012: There should be no spaces around attribute =
-                    if let Some(m) = space_around_eq_re.find(&masked_raw) {
-                        errors.push(LintError {
-                            code: "H012".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "There should be no spaces around attribute =.".to_string(),
-                        });
-                    }
-
-                    // Rule H019: Replace 'javascript:abc()'
-                    if let Some(m) = js_link_re.find(raw) {
-                        errors.push(LintError {
-                            code: "H019".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Replace 'javascript:abc()' with on_ event and real url."
-                                .to_string(),
-                        });
-                    }
-
-                    // Rule H021: Inline styles should be avoided
-                    if let Some(m) = inline_style_re.find(raw) {
-                        errors.push(LintError {
-                            code: "H021".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Inline styles should be avoided.".to_string(),
-                        });
-                    }
-
-                    // Rule H022: Use HTTPS for external links
-                    if let Some(m) = http_link_re.find(raw) {
-                        errors.push(LintError {
-                            code: "H022".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Use HTTPS for external links.".to_string(),
-                        });
-                    }
-
-                    // Rule H024: Omit type on scripts and styles
-                    if (name_lower == "script" || name_lower == "style")
-                        && script_style_type_re.is_match(raw)
-                    {
-                        errors.push(LintError {
-                            code: "H024".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Omit type on scripts and styles.".to_string(),
-                        });
-                    }
-
-                    // Rule H026: Empty id and class tags can be removed
-                    if let Some(m) = empty_id_class_re.find(raw) {
-                        errors.push(LintError {
-                            code: "H026".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: m.as_str().to_string(),
-                            message: "Empty id and class tags can be removed.".to_string(),
-                        });
-                    }
-
-                    // Rule H029: Consider using lowercase form method values
-                    if name_lower == "form" {
-                        if let Some(caps) = method_re.captures(raw) {
-                            let method_val = caps.get(1).unwrap().as_str();
-                            if method_val.chars().any(|c| c.is_uppercase()) {
+                            // Rule H035: Meta tags should be self closing
+                            if !raw.ends_with("/>") {
                                 errors.push(LintError {
-                                    code: "H029".to_string(),
+                                    code: "H035".to_string(),
                                     line: *line,
                                     column: *column,
-                                    match_str: caps.get(0).unwrap().as_str().to_string(),
-                                    message: "Consider using lowercase form method values."
+                                    match_str: raw.to_string(),
+                                    message: "Meta tags should be self closing.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H017: Void tags self closing (excluding meta for H035)
+                        if is_void_element(&name_lower)
+                            && name_lower != "meta"
+                            && !raw.ends_with("/>")
+                        {
+                            errors.push(LintError {
+                                code: "H017".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Void tags should be self closing.".to_string(),
+                            });
+                        }
+
+                        // Rule H020: Empty tag pair
+                        if !is_self_closing
+                            && !is_void_element(&name_lower)
+                            && !matches!(name_lower.as_str(), "td" | "li" | "th" | "dt" | "dd")
+                            && !raw.contains(' ')
+                        {
+                            let mut next_tag_idx = i + 1;
+                            while next_tag_idx < tokens.len() {
+                                match &tokens[next_tag_idx] {
+                                    Token::Text { raw, .. } if raw.trim().is_empty() => {
+                                        next_tag_idx += 1;
+                                    }
+                                    Token::Tag {
+                                        is_closing: true,
+                                        name: next_name,
+                                        ..
+                                    } => {
+                                        if next_name.to_lowercase() == name_lower {
+                                            errors.push(LintError {
+                                                code: "H020".to_string(),
+                                                line: *line,
+                                                column: *column,
+                                                match_str: raw.to_string(),
+                                                message: "Empty tag pair found. Consider removing."
+                                                    .to_string(),
+                                            });
+                                        }
+                                        break;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                        }
+
+                        // Rule H033: Form action whitespace
+                        if name_lower == "form" && form_action_ws_re.is_match(raw) {
+                            errors.push(LintError {
+                                code: "H033".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Extra whitespace found in form action.".to_string(),
+                            });
+                        }
+
+                        // Rule H037: Duplicate attribute
+                        let mut seen_attrs = HashSet::new();
+                        for cap in attr_name_re.captures_iter(raw) {
+                            let attr_name = cap.get(1).unwrap().as_str().to_lowercase();
+                            if !seen_attrs.insert(attr_name) {
+                                errors.push(LintError {
+                                    code: "H037".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: raw.to_string(),
+                                    message: "Duplicate attribute found.".to_string(),
+                                });
+                                break; // report once per tag to avoid spam
+                            }
+                        }
+
+                        // Rule T028: Consider using spaceless tags inside attribute values
+                        if let Some(m) = spaceless_tags_re.find(raw) {
+                            errors.push(LintError {
+                                code: "T028".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: m.as_str().to_string(),
+                                message: "Consider using spaceless tags inside attribute values. {%- if/for -%}".to_string(),
+                            });
+                        }
+
+                        // Rule H009: Tag names should be lowercase
+                        if name.chars().any(|c| c.is_uppercase()) {
+                            errors.push(LintError {
+                                code: "H009".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Tag names should be lowercase.".to_string(),
+                            });
+                        }
+
+                        // Rule H010: Attribute names should be lowercase
+                        for cap in attr_name_re.captures_iter(raw) {
+                            let attr_name = cap.get(1).unwrap().as_str();
+                            if attr_name.chars().any(|c| c.is_uppercase()) {
+                                errors.push(LintError {
+                                    code: "H010".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: attr_name.to_string(),
+                                    message: "Attribute names should be lowercase.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H005: lang attribute on html tag
+                        if name_lower == "html" && !raw_lower.contains("lang=") {
+                            errors.push(LintError {
+                                code: "H005".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Html tag should have lang attribute.".to_string(),
+                            });
+                        }
+
+                        // Rule H006 & H013: img height, width, and alt
+                        if name_lower == "img" {
+                            if !raw_lower.contains("height=") || !raw_lower.contains("width=") {
+                                errors.push(LintError {
+                                    code: "H006".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: raw.to_string(),
+                                    message: "Img tag should have height and width attributes."
+                                        .to_string(),
+                                });
+                            }
+                            if !raw_lower.contains("alt=") {
+                                errors.push(LintError {
+                                    code: "H013".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: raw.to_string(),
+                                    message: "Img tag should have an alt attribute.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H008: Attributes should be double quoted
+                        if let Some(m) = single_quote_attr_re.find(&masked_raw) {
+                            let attr_content = &raw[m.start()..m.end()];
+                            // djlint ignores attributes that contain template tags
+                            if !attr_content.contains("{{") && !attr_content.contains("{%") {
+                                errors.push(LintError {
+                                    code: "H008".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: raw[..m.end()].to_string(),
+                                    message: "Attributes should be double quoted.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H011: Attribute values should be quoted
+                        if let Some(m) = unquoted_attr_re.find(&masked_raw) {
+                            let attr_content = &raw[m.start()..m.end()];
+                            // djlint ignores attributes that contain template tags
+                            if !attr_content.contains("{{") && !attr_content.contains("{%") {
+                                errors.push(LintError {
+                                    code: "H011".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: m.as_str().to_string(),
+                                    message: "Attribute values should be quoted.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H012: There should be no spaces around attribute =
+                        if let Some(m) = space_around_eq_re.find(&masked_raw) {
+                            let attr_content = &raw[m.start()..m.end()];
+                            // djlint ignores attributes that contain template tags
+                            if !attr_content.contains("{{") && !attr_content.contains("{%") {
+                                errors.push(LintError {
+                                    code: "H012".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: m.as_str().to_string(),
+                                    message: "There should be no spaces around attribute =."
                                         .to_string(),
                                 });
                             }
                         }
-                    }
 
-                    // Rule H036: Avoid use of <br> tags
-                    if name_lower == "br" {
-                        errors.push(LintError {
-                            code: "H036".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Avoid use of <br> tags.".to_string(),
-                        });
-                    }
-
-                    // Rule D004 & J004: Static urls
-                    if (name_lower == "link" || name_lower == "script" || name_lower == "img")
-                        && (raw.contains("src=\"/static/") || raw.contains("href=\"/static/"))
-                    {
-                        errors.push(LintError {
-                            code: "D004".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "(Django) Static urls should follow {% static path/to/file %} pattern.".to_string(),
-                        });
-                        errors.push(LintError {
-                            code: "J004".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "(Jinja) Static urls should follow {{ url_for('static'..) }} pattern.".to_string(),
-                        });
-                    }
-
-                    // Rule D018 & J018: Internal links
-                    if (name_lower == "a" || name_lower == "form")
-                        && (raw.contains("href=\"/") || raw.contains("action=\"/"))
-                        && !raw.contains("href=\"#")
-                        && !raw.contains("action=\"#")
-                        && !raw.contains("{% url")
-                    {
-                        errors.push(LintError {
-                            code: "D018".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message:
-                                "(Django) Internal links should use the {% url ... %} pattern."
+                        // Rule H019: Replace 'javascript:abc()'
+                        if let Some(m) = js_link_re.find(raw) {
+                            errors.push(LintError {
+                                code: "H019".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: m.as_str().to_string(),
+                                message: "Replace 'javascript:abc()' with on_ event and real url."
                                     .to_string(),
-                        });
-                        errors.push(LintError {
-                            code: "J018".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message:
-                                "(Jinja) Internal links should use the {{ url_for() ... }} pattern."
-                                    .to_string(),
-                        });
+                            });
+                        }
+
+                        // Rule H021: Inline styles should be avoided
+                        if let Some(m) = inline_style_re.find(raw) {
+                            // djlint ignores styles that contain template tags
+                            if !raw.contains("{{") && !raw.contains("{%") {
+                                errors.push(LintError {
+                                    code: "H021".to_string(),
+                                    line: *line,
+                                    column: *column,
+                                    match_str: m.as_str().to_string(),
+                                    message: "Inline styles should be avoided.".to_string(),
+                                });
+                            }
+                        }
+
+                        // Rule H022: Use HTTPS for external links
+                        if let Some(m) = http_link_re.find(raw) {
+                            errors.push(LintError {
+                                code: "H022".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: m.as_str().to_string(),
+                                message: "Use HTTPS for external links.".to_string(),
+                            });
+                        }
+
+                        // Rule H024: Omit type on scripts and styles
+                        if (name_lower == "script" || name_lower == "style")
+                            && script_style_type_re.is_match(raw)
+                        {
+                            errors.push(LintError {
+                                code: "H024".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Omit type on scripts and styles.".to_string(),
+                            });
+                        }
+
+                        // Rule H026: Empty id and class tags can be removed
+                        if let Some(m) = empty_id_class_re.find(raw) {
+                            errors.push(LintError {
+                                code: "H026".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: m.as_str().to_string(),
+                                message: "Empty id and class tags can be removed.".to_string(),
+                            });
+                        }
+
+                        // Rule H029: Consider using lowercase form method values
+                        if name_lower == "form" {
+                            if let Some(caps) = method_re.captures(raw) {
+                                let method_val = caps.get(1).unwrap().as_str();
+                                if method_val.chars().any(|c| c.is_uppercase()) {
+                                    errors.push(LintError {
+                                        code: "H029".to_string(),
+                                        line: *line,
+                                        column: *column,
+                                        match_str: caps.get(0).unwrap().as_str().to_string(),
+                                        message: "Consider using lowercase form method values."
+                                            .to_string(),
+                                    });
+                                }
+                            }
+                        }
+
+                        // Rule H036: Avoid use of <br> tags
+                        if name_lower == "br" {
+                            errors.push(LintError {
+                                code: "H036".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "Avoid use of <br> tags.".to_string(),
+                            });
+                        }
+
+                        // Rule D004 & J004: Static urls
+                        if (name_lower == "link" || name_lower == "script" || name_lower == "img")
+                            && (raw.contains("src=\"/static/") || raw.contains("href=\"/static/"))
+                        {
+                            errors.push(LintError {
+                                code: "D004".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "(Django) Static urls should follow {% static path/to/file %} pattern.".to_string(),
+                            });
+                            errors.push(LintError {
+                                code: "J004".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message: "(Jinja) Static urls should follow {{ url_for('static'..) }} pattern.".to_string(),
+                            });
+                        }
+
+                        // Rule D018 & J018: Internal links
+                        if (name_lower == "a" || name_lower == "form")
+                            && (raw.contains("href=\"/") || raw.contains("action=\"/"))
+                            && !raw.contains("href=\"#")
+                            && !raw.contains("action=\"#")
+                            && !raw.contains("{% url")
+                        {
+                            errors.push(LintError {
+                                code: "D018".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message:
+                                    "(Django) Internal links should use the {% url ... %} pattern."
+                                        .to_string(),
+                            });
+                            errors.push(LintError {
+                                code: "J018".to_string(),
+                                line: *line,
+                                column: *column,
+                                match_str: raw.to_string(),
+                                message:
+                                    "(Jinja) Internal links should use the {{ url_for() ... }} pattern."
+                                        .to_string(),
+                            });
+                        }
                     }
 
-                    if !is_self_closing {
+                    if !is_self_closing && !is_void_element(&name_lower) {
                         open_tags.push((name_lower, *line, *column));
                     }
                 }
             }
-            Token::DjangoVar { raw, line, column } | Token::DjangoBlock { raw, line, column } => {
+            Token::DjangoVar {
+                raw,
+                line,
+                column,
+                offset: _,
+            }
+            | Token::DjangoBlock {
+                raw,
+                line,
+                column,
+                offset: _,
+            } if !token_is_ignored => {
                 let is_var = matches!(token, Token::DjangoVar { .. });
                 let (open_tag, close_tag) = if is_var { ("{{", "}}") } else { ("{%", "%}") };
 
@@ -505,7 +582,6 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                     let inner = raw.trim_start_matches("{%").trim_end_matches("%}").trim();
                     if inner == "endblock" {
-                        // Special case: djlint (Python) allows anonymous endblock if it's a one-liner
                         errors.push(LintError {
                             code: "T003".to_string(),
                             line: *line,
@@ -543,7 +619,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     });
                 }
             }
-            Token::Text { raw, line, column } => {
+            Token::Text {
+                raw,
+                line,
+                column,
+                offset: _,
+            } if !token_is_ignored => {
                 // Rule H023: Do not use entity references
                 if let Some(m) = entity_re.find(raw) {
                     let entity = m.as_str();
@@ -632,14 +713,20 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         _ => vec![],
     };
 
+    let default_false_rules = ["H017", "H035", "H036"];
+
     // Filter ignored rules and profile exclusions
     errors
         .into_iter()
         .filter(|e| {
-            !config.ignore.contains(&e.code)
-                && !excluded_prefixes
-                    .iter()
-                    .any(|prefix| e.code.starts_with(prefix))
+            let is_default_false = default_false_rules.contains(&e.code.as_str());
+            let is_included = config.include.contains(&e.code);
+            let is_ignored = config.ignore.contains(&e.code);
+            let is_profile_excluded = excluded_prefixes
+                .iter()
+                .any(|prefix| e.code.starts_with(prefix));
+
+            !is_ignored && !is_profile_excluded && (!is_default_false || is_included)
         })
         .collect()
 }

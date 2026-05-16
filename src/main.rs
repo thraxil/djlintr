@@ -49,6 +49,14 @@ struct Args {
     /// Consolidate blank lines down to x lines
     #[arg(long, default_value = "1")]
     max_blank_lines: usize,
+
+    /// Codes to ignore
+    #[arg(short, long, value_delimiter = ',')]
+    ignore: Option<Vec<String>>,
+
+    /// Codes to include
+    #[arg(long, value_delimiter = ',')]
+    include: Option<Vec<String>>,
 }
 
 struct FileResult {
@@ -69,6 +77,14 @@ fn main() -> Result<()> {
 
     if let Some(profile) = &args.profile {
         config.profile = profile.clone();
+    }
+
+    if let Some(ignore) = &args.ignore {
+        config.ignore.extend(ignore.clone());
+    }
+
+    if let Some(include) = &args.include {
+        config.include.extend(include.clone());
     }
 
     config.max_blank_lines = args.max_blank_lines;
