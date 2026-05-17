@@ -37,6 +37,9 @@ fetch-test-data: ## Fetch external templates for parity testing
 compare-lint: ## Compare lint results between djlint and djlintr
 	python3 scripts/compare_lint.py
 
+compare-reformat: ## Compare reformat results between djlint and djlintr
+	python3 scripts/compare_reformat.py
+
 help: ## Show this help message
 	@echo "Usage: make [target]"
 	@echo ""
