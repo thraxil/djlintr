@@ -222,15 +222,12 @@ pub fn format(config: &Config, source: &str) -> String {
 
                                 if can_collapse {
                                     // Collapse
-                                    let mut content = String::new();
-                                    for range in &logical_elements {
-                                        content.push_str(&format_range_inlined(
-                                            range,
-                                            &tokens,
-                                            indent_level,
-                                            config,
-                                        ));
-                                    }
+                                    let content = format_range_inlined_joined(
+                                        &logical_elements,
+                                        &tokens,
+                                        indent_level,
+                                        config,
+                                    );
                                     let collapsed_content = content.trim();
                                     let projected_len = (indent_level * config.indent)
                                         + formatted_tag.len()
@@ -238,7 +235,9 @@ pub fn format(config: &Config, source: &str) -> String {
                                         + name.len()
                                         + 3;
 
-                                    if projected_len <= config.max_line_length {
+                                    if projected_len <= config.max_line_length
+                                        || logical_elements.is_empty()
+                                    {
                                         output.push_str(collapsed_content);
                                         output.push_str(&format!("</{}>", name));
                                         output.push('\n');
@@ -251,15 +250,12 @@ pub fn format(config: &Config, source: &str) -> String {
                                 // If not collapsed, we still might join children on one line if they are all inline-ish
                                 // and the parent is NOT structural.
                                 if !is_structural && !logical_elements.is_empty() {
-                                    let mut content = String::new();
-                                    for range in &logical_elements {
-                                        content.push_str(&format_range_inlined(
-                                            range,
-                                            &tokens,
-                                            indent_level + 1,
-                                            config,
-                                        ));
-                                    }
+                                    let content = format_range_inlined_joined(
+                                        &logical_elements,
+                                        &tokens,
+                                        indent_level + 1,
+                                        config,
+                                    );
                                     let collapsed_content = content.trim();
 
                                     output.push('\n');
@@ -369,15 +365,12 @@ pub fn format(config: &Config, source: &str) -> String {
                         if all_inline_ish {
                             let normalized_start = normalize_django(raw);
                             let normalized_end = normalize_django(tokens[j].raw());
-                            let mut content = String::new();
-                            for range in &logical_elements {
-                                content.push_str(&format_range_inlined(
-                                    range,
-                                    &tokens,
-                                    indent_level + 1,
-                                    config,
-                                ));
-                            }
+                            let content = format_range_inlined_joined(
+                                &logical_elements,
+                                &tokens,
+                                indent_level + 1,
+                                config,
+                            );
                             let collapsed_content = content.trim();
                             let projected_len = (indent_level * config.indent)
                                 + normalized_start.len()
@@ -512,7 +505,11 @@ fn format_tag(
             if i == 0 || (!starts_with_block && !prev_ends_with_block) {
                 formatted.push(' ');
             }
-            formatted.push_str(attr);
+            if attr.starts_with("style=") {
+                formatted.push_str(&format_style_attribute(attr, ""));
+            } else {
+                formatted.push_str(attr);
+            }
         }
         if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
             formatted.push_str(" />");
@@ -528,13 +525,21 @@ fn format_tag(
     let mut attrs_iter = attrs.into_iter();
     if let Some(attr) = attrs_iter.next() {
         formatted.push(' ');
-        formatted.push_str(&attr);
+        if attr.starts_with("style=") {
+            formatted.push_str(&format_style_attribute(&attr, &attr_indent));
+        } else {
+            formatted.push_str(&attr);
+        }
     }
 
     for attr in attrs_iter {
         formatted.push('\n');
         formatted.push_str(&attr_indent);
-        formatted.push_str(&attr);
+        if attr.starts_with("style=") {
+            formatted.push_str(&format_style_attribute(&attr, &attr_indent));
+        } else {
+            formatted.push_str(&attr);
+        }
     }
 
     if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
@@ -544,6 +549,53 @@ fn format_tag(
     }
 
     formatted
+}
+
+fn format_style_attribute(attr: &str, indent: &str) -> String {
+    // Expect style="prop1: val1; prop2: val2;"
+    let quote = if attr.contains("=\"") { "\"" } else { "'" };
+    let content_start = attr.find(quote).unwrap_or(0) + 1;
+    let content_end = attr.rfind(quote).unwrap_or(attr.len());
+    let content = &attr[content_start..content_end];
+
+    let props: Vec<&str> = content
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if props.is_empty() {
+        return attr.to_string();
+    }
+
+    if indent.is_empty() {
+        // No wrapping requested, but still strip trailing semicolon if it's the only property
+        if props.len() == 1 {
+            return format!("style={}{}{}", quote, props[0], quote);
+        }
+        let mut result = format!("style={}{}", quote, props[0]);
+        for prop in props.iter().skip(1) {
+            result.push_str("; ");
+            result.push_str(prop);
+        }
+        result.push_str(quote);
+        return result;
+    }
+
+    let mut result = format!("style={}{}", quote, props[0]);
+    if props.len() > 1 {
+        for prop in props.iter().skip(1) {
+            result.push(';');
+            result.push('\n');
+            result.push_str(indent);
+            // Add additional indent for style property
+            result.push_str("       "); // "style=\"" is 7 chars
+            result.push_str(prop);
+        }
+    }
+    // djlint seems to strip trailing semicolon when wrapping
+    result.push_str(quote);
+    result
 }
 
 fn get_django_tag_name(raw: &str) -> Option<&str> {
@@ -727,8 +779,9 @@ fn format_range_inlined(
     config: &Config,
 ) -> String {
     let mut result = String::new();
-    for i in range.clone() {
-        let token = &tokens[i];
+    let mut k = range.start;
+    while k < range.end {
+        let token = &tokens[k];
         match token {
             Token::Tag {
                 name,
@@ -740,13 +793,44 @@ fn format_range_inlined(
                 if *is_closing {
                     result.push_str(&format!("</{}>", name));
                 } else {
-                    result.push_str(&format_tag(
-                        name,
-                        raw,
-                        *is_self_closing,
-                        indent_level,
-                        config,
-                    ));
+                    let (children, closing_idx) = get_children_info(k, tokens);
+                    if let Some(j) = closing_idx {
+                        if range.contains(&j) {
+                            result.push_str(&format_tag(
+                                name,
+                                raw,
+                                *is_self_closing,
+                                indent_level,
+                                config,
+                            ));
+                            let sub_elements = get_logical_elements(&children, tokens);
+                            let inner_content = format_range_inlined_joined(
+                                &sub_elements,
+                                tokens,
+                                indent_level,
+                                config,
+                            );
+                            result.push_str(&inner_content);
+                            result.push_str(&format!("</{}>", name));
+                            k = j;
+                        } else {
+                            result.push_str(&format_tag(
+                                name,
+                                raw,
+                                *is_self_closing,
+                                indent_level,
+                                config,
+                            ));
+                        }
+                    } else {
+                        result.push_str(&format_tag(
+                            name,
+                            raw,
+                            *is_self_closing,
+                            indent_level,
+                            config,
+                        ));
+                    }
                 }
             }
             Token::DjangoVar { raw, .. } | Token::DjangoBlock { raw, .. } => {
@@ -763,6 +847,27 @@ fn format_range_inlined(
                 result.push_str(token.raw());
             }
         }
+        k += 1;
     }
     result
+}
+
+fn format_range_inlined_joined(
+    logical_elements: &[std::ops::Range<usize>],
+    tokens: &[Token],
+    indent_level: usize,
+    config: &Config,
+) -> String {
+    let mut content = String::new();
+    for (k, range) in logical_elements.iter().enumerate() {
+        let mut element_content = format_range_inlined(range, tokens, indent_level, config);
+        if k == 0 {
+            element_content = element_content.trim_start().to_string();
+        }
+        if k == logical_elements.len() - 1 {
+            element_content = element_content.trim_end().to_string();
+        }
+        content.push_str(&element_content);
+    }
+    content
 }

@@ -41,6 +41,10 @@ use rstest::rstest;
     "{% block content %}\nAn activation email has been sent.  Please check your email and click on the link to activate your account.\n{% endblock %}",
     "{% block content %}\n    An activation email has been sent.  Please check your email and click on the link to activate your account.\n{% endblock %}\n"
 )]
+#[case(
+    "<div style=\"color: red; background: blue; border: 1px solid black; padding: 10px; margin: 10px;\"></div>",
+    "<div style=\"color: red;\n            background: blue;\n            border: 1px solid black;\n            padding: 10px;\n            margin: 10px\"></div>\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
