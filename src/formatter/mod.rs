@@ -239,15 +239,30 @@ pub fn format(config: &Config, source: &str) -> String {
 }
 
 fn normalize_django(raw: &str) -> String {
-    if raw.starts_with("{{") && raw.ends_with("}}") {
-        let content = raw[2..raw.len() - 2].trim();
-        format!("{{{{ {} }}}}", content)
-    } else if raw.starts_with("{%") && raw.ends_with("%}") {
-        let content = raw[2..raw.len() - 2].trim();
-        format!("{{% {} %}}", content)
-    } else {
-        raw.to_string()
-    }
+    let var_re = Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap();
+    let block_re = Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap();
+
+    let mut result = raw.to_string();
+
+    // Replace vars
+    result = var_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            let content = m[2..m.len() - 2].trim();
+            format!("{{{{ {} }}}}", content)
+        })
+        .to_string();
+
+    // Replace blocks
+    result = block_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            let m = caps.get(0).unwrap().as_str();
+            let content = m[2..m.len() - 2].trim();
+            format!("{{% {} %}}", content)
+        })
+        .to_string();
+
+    result
 }
 
 fn format_tag(
@@ -276,14 +291,7 @@ fn format_tag(
 
     let attrs: Vec<String> = attr_re
         .find_iter(content)
-        .map(|m| {
-            let s = m.as_str();
-            if s.starts_with("{{") || s.starts_with("{%") {
-                normalize_django(s)
-            } else {
-                s.to_string()
-            }
-        })
+        .map(|m| normalize_django(m.as_str()))
         .collect();
 
     if attrs.is_empty() {
@@ -299,14 +307,18 @@ fn format_tag(
 
     if total_len <= config.max_attribute_length {
         let mut formatted = format!("<{}", name);
-        let mut prev_was_block = false;
         for (i, attr) in attrs.iter().enumerate() {
-            let is_block = attr.starts_with("{{") || attr.starts_with("{%");
-            if i == 0 || (!is_block && !prev_was_block) {
+            let starts_with_block = attr.starts_with("{%");
+            let prev_ends_with_block = if i > 0 {
+                attrs[i - 1].ends_with("%}")
+            } else {
+                false
+            };
+
+            if i == 0 || (!starts_with_block && !prev_ends_with_block) {
                 formatted.push(' ');
             }
             formatted.push_str(attr);
-            prev_was_block = is_block;
         }
         if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
             formatted.push_str(" />");
