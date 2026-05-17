@@ -56,6 +56,8 @@ jobs:
         run: make fetch-test-data
       - name: Run parity comparison
         run: make compare-lint
+      - name: Run format parity comparison
+        run: make compare-reformat
 
   build:
     name: Build (${{ matrix.target }})
