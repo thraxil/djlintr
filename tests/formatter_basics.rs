@@ -37,6 +37,10 @@ use rstest::rstest;
     "{% block title %}<h1 class=\"foo\">Internal Server Error</h1>{% endblock %}\n"
 )]
 #[case("<p>\n  line1\n  line2\n</p>", "<p>\n    line1\n    line2\n</p>\n")]
+#[case(
+    "{% block content %}\nAn activation email has been sent.  Please check your email and click on the link to activate your account.\n{% endblock %}",
+    "{% block content %}\n    An activation email has been sent.  Please check your email and click on the link to activate your account.\n{% endblock %}\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);

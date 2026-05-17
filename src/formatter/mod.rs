@@ -198,35 +198,49 @@ pub fn format(config: &Config, source: &str) -> String {
                                 if can_collapse {
                                     // Collapse
                                     let mut content = String::new();
-                                    for range in logical_elements {
+                                    for range in &logical_elements {
                                         content.push_str(&format_range_inlined(
-                                            &range,
+                                            range,
                                             &tokens,
                                             indent_level,
                                             config,
                                         ));
                                     }
-                                    output.push_str(content.trim());
-                                    output.push_str(&format!("</{}>", name));
-                                    output.push('\n');
-                                    at_start_of_line = true;
-                                    i = j + 1;
-                                    continue;
-                                } else {
-                                    // Expand parent, but join children on one line
-                                    output.push('\n');
-                                    output
-                                        .push_str(&" ".repeat((indent_level + 1) * config.indent));
+                                    let collapsed_content = content.trim();
+                                    let projected_len = (indent_level * config.indent)
+                                        + formatted_tag.len()
+                                        + collapsed_content.len()
+                                        + name.len()
+                                        + 3;
+
+                                    if projected_len <= config.max_line_length {
+                                        output.push_str(collapsed_content);
+                                        output.push_str(&format!("</{}>", name));
+                                        output.push('\n');
+                                        at_start_of_line = true;
+                                        i = j + 1;
+                                        continue;
+                                    }
+                                }
+
+                                // If not collapsed, we still might join children on one line if they are all inline-ish
+                                // and the parent is NOT structural.
+                                if !is_structural && !logical_elements.is_empty() {
                                     let mut content = String::new();
-                                    for range in logical_elements {
+                                    for range in &logical_elements {
                                         content.push_str(&format_range_inlined(
-                                            &range,
+                                            range,
                                             &tokens,
                                             indent_level + 1,
                                             config,
                                         ));
                                     }
-                                    output.push_str(content.trim());
+                                    let collapsed_content = content.trim();
+
+                                    output.push('\n');
+                                    output
+                                        .push_str(&" ".repeat((indent_level + 1) * config.indent));
+                                    output.push_str(collapsed_content);
                                     output.push('\n');
                                     output.push_str(&" ".repeat(indent_level * config.indent));
                                     output.push_str(&format!("</{}>", name));
@@ -270,9 +284,6 @@ pub fn format(config: &Config, source: &str) -> String {
                             output.push('\n');
                         }
                         at_start_of_line = true;
-                    } else {
-                        output.push_str(raw);
-                        at_start_of_line = false;
                     }
                 }
             }
@@ -300,55 +311,73 @@ pub fn format(config: &Config, source: &str) -> String {
                     if let Some(j) = closing_idx {
                         let logical_elements = get_logical_elements(&children, &tokens);
 
-                        if logical_elements.len() <= 1 {
-                            let can_inline = if logical_elements.is_empty() {
-                                true
+                        let all_inline_ish = logical_elements.iter().all(|range| {
+                            if range.len() == 1 {
+                                let child = &tokens[range.start];
+                                if let Token::Text { raw, .. } = child {
+                                    !raw.trim().contains('\n')
+                                } else {
+                                    matches!(child, Token::DjangoVar { .. })
+                                }
                             } else {
-                                let range = &logical_elements[0];
-                                if range.len() == 1 {
-                                    let child = &tokens[range.start];
-                                    if let Token::Text { raw, .. } = child {
-                                        !raw.trim().contains('\n')
+                                // It's a tag pair.
+                                if let Token::Tag { name: n, .. } = &tokens[range.start] {
+                                    let is_block = is_html_block_tag(n);
+                                    if is_block {
+                                        // Don't inline block tags if they contain other tags
+                                        let children_indices: Vec<usize> =
+                                            (range.start + 1..range.end - 1).collect();
+                                        let sub_elements =
+                                            get_logical_elements(&children_indices, &tokens);
+                                        let has_sub_tag = sub_elements.iter().any(|r| r.len() > 1);
+                                        !has_sub_tag
+                                            && is_tag_range_inlinable(range, &tokens, config)
                                     } else {
-                                        matches!(child, Token::DjangoVar { .. })
+                                        is_tag_range_inlinable(range, &tokens, config)
                                     }
                                 } else {
-                                    // It's a tag pair.
-                                    if let Token::Tag { name: n, .. } = &tokens[range.start] {
-                                        let is_block = is_html_block_tag(n);
-                                        if is_block {
-                                            // Don't inline block tags if they contain other tags
-                                            let children_indices: Vec<usize> =
-                                                (range.start + 1..range.end - 1).collect();
-                                            let sub_elements =
-                                                get_logical_elements(&children_indices, &tokens);
-                                            let has_sub_tag =
-                                                sub_elements.iter().any(|r| r.len() > 1);
-                                            !has_sub_tag
-                                                && is_tag_range_inlinable(range, &tokens, config)
-                                        } else {
-                                            is_tag_range_inlinable(range, &tokens, config)
-                                        }
-                                    } else {
-                                        false
-                                    }
+                                    false
                                 }
-                            };
+                            }
+                        });
 
-                            if can_inline {
+                        if all_inline_ish {
+                            let normalized_start = normalize_django(raw);
+                            let normalized_end = normalize_django(tokens[j].raw());
+                            let mut content = String::new();
+                            for range in &logical_elements {
+                                content.push_str(&format_range_inlined(
+                                    range,
+                                    &tokens,
+                                    indent_level + 1,
+                                    config,
+                                ));
+                            }
+                            let collapsed_content = content.trim();
+                            let projected_len = (indent_level * config.indent)
+                                + normalized_start.len()
+                                + collapsed_content.len()
+                                + normalized_end.len();
+
+                            if projected_len <= config.max_line_length {
                                 output.push_str(&" ".repeat(indent_level * config.indent));
-                                output.push_str(&normalize_django(raw));
-                                let mut content = String::new();
-                                for range in logical_elements {
-                                    content.push_str(&format_range_inlined(
-                                        &range,
-                                        &tokens,
-                                        indent_level + 1,
-                                        config,
-                                    ));
-                                }
-                                output.push_str(content.trim());
-                                output.push_str(&normalize_django(tokens[j].raw()));
+                                output.push_str(&normalized_start);
+                                output.push_str(collapsed_content);
+                                output.push_str(&normalized_end);
+                                output.push('\n');
+                                at_start_of_line = true;
+                                i = j + 1;
+                                continue;
+                            } else if !logical_elements.is_empty() {
+                                // Expand but join children
+                                output.push_str(&" ".repeat(indent_level * config.indent));
+                                output.push_str(&normalized_start);
+                                output.push('\n');
+                                output.push_str(&" ".repeat((indent_level + 1) * config.indent));
+                                output.push_str(collapsed_content);
+                                output.push('\n');
+                                output.push_str(&" ".repeat(indent_level * config.indent));
+                                output.push_str(&normalized_end);
                                 output.push('\n');
                                 at_start_of_line = true;
                                 i = j + 1;
