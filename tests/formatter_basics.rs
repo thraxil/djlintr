@@ -24,6 +24,10 @@ use rstest::rstest;
     "<div>\n    line1\n    line2\n</div>",
     "<div>\n    line1\n    line2\n</div>\n"
 )]
+#[case(
+    "{% block title %}\n    Internal Server Error\n{% endblock %}",
+    "{% block title %}Internal Server Error{% endblock %}\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
