@@ -17,10 +17,10 @@ pub fn format(config: &Config, source: &str) -> String {
 
         // Check for djlint:off/on
         match token {
-            Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. } => {
-                if raw.contains("djlint:off") {
-                    formatting_enabled = false;
-                }
+            Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. }
+                if raw.contains("djlint:off") =>
+            {
+                formatting_enabled = false;
             }
             _ => {}
         }
