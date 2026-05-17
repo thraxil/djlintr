@@ -29,6 +29,8 @@ pub struct Config {
         deserialize_with = "deserialize_usize"
     )]
     pub max_blank_lines: usize,
+    #[serde(default)]
+    pub close_void_tags: bool,
 }
 
 fn deserialize_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
@@ -96,6 +98,7 @@ impl Default for Config {
             custom_blocks: Vec::new(),
             profile: "html".to_string(),
             max_blank_lines: 1,
+            close_void_tags: false,
         }
     }
 }

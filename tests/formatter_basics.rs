@@ -16,6 +16,14 @@ use rstest::rstest;
     "<_tag label=\"a\" label=\"b\"></_tag>",
     "<_tag label=\"a\" label=\"b\"></_tag>\n"
 )]
+#[case(
+    "{# djlint:off #}\n<div   class='foo'  >\n{# djlint:on #}",
+    "{# djlint:off #}\n<div   class='foo'  >\n{# djlint:on #}\n"
+)]
+#[case(
+    "<div>\n    line1\n    line2\n</div>",
+    "<div>\n    line1\n    line2\n</div>\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);

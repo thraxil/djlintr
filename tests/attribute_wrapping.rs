@@ -12,12 +12,12 @@ fn test_attribute_wrapping() {
 }
 
 #[test]
-fn test_no_attribute_wrapping() {
+fn test_complex_attribute_no_split() {
     let mut config = Config::default();
-    config.max_attribute_length = 100; // Set high to prevent wrapping
-    let input = "<div class=\"short\" id=\"id\">Hello</div>";
+    config.max_attribute_length = 20;
+    let input = "<button type=\"button\" @click=\"exportModalOpen = true; $nextTick(() => $refs.exportModal.focus())\">";
     let output = format(&config, input);
 
-    let expected = "<div class=\"short\" id=\"id\">Hello</div>\n";
+    let expected = "<button type=\"button\"\n        @click=\"exportModalOpen = true; $nextTick(() => $refs.exportModal.focus())\">\n";
     assert_eq!(output, expected);
 }

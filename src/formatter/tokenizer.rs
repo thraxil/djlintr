@@ -17,6 +17,12 @@ pub enum Token<'a> {
         column: usize,
         offset: usize,
     },
+    DjangoComment {
+        raw: &'a str,
+        line: usize,
+        column: usize,
+        offset: usize,
+    },
     Text {
         raw: &'a str,
         line: usize,
@@ -53,6 +59,7 @@ pub struct Tokenizer<'a> {
     doctype_re: Regex,
     django_var_re: Regex,
     django_block_re: Regex,
+    django_comment_re: Regex,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -70,6 +77,7 @@ impl<'a> Tokenizer<'a> {
             doctype_re: Regex::new(r#"(?i)^<!DOCTYPE[^>]*>"#).unwrap(),
             django_var_re: Regex::new(r#"^\{\{[\s\S]*?\}\}"#).unwrap(),
             django_block_re: Regex::new(r#"^\{%[\s\S]*?%\}"#).unwrap(),
+            django_comment_re: Regex::new(r#"^\{#[\s\S]*?#\}"#).unwrap(),
         }
     }
 
@@ -133,6 +141,17 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
+        if let Some(m) = self.django_comment_re.find(remaining) {
+            let raw = m.as_str();
+            self.update_pos(m.end());
+            return Some(Token::DjangoComment {
+                raw,
+                line: current_line,
+                column: current_column,
+                offset: current_offset,
+            });
+        }
+
         if let Some(m) = self.doctype_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
@@ -169,7 +188,9 @@ impl<'a> Iterator for Tokenizer<'a> {
             if i > 0
                 && (c == '<'
                     || (c == '{'
-                        && (remaining[i..].starts_with("{{") || remaining[i..].starts_with("{%"))))
+                        && (remaining[i..].starts_with("{{")
+                            || remaining[i..].starts_with("{%")
+                            || remaining[i..].starts_with("{#"))))
             {
                 next_stop = i;
                 break;
@@ -212,6 +233,7 @@ impl<'a> Token<'a> {
         match self {
             Token::Tag { raw, .. } => raw,
             Token::Comment { raw, .. } => raw,
+            Token::DjangoComment { raw, .. } => raw,
             Token::Text { raw, .. } => raw,
             Token::Doctype { raw, .. } => raw,
             Token::DjangoVar { raw, .. } => raw,
@@ -223,6 +245,7 @@ impl<'a> Token<'a> {
         match self {
             Token::Tag { line, .. } => *line,
             Token::Comment { line, .. } => *line,
+            Token::DjangoComment { line, .. } => *line,
             Token::Text { line, .. } => *line,
             Token::Doctype { line, .. } => *line,
             Token::DjangoVar { line, .. } => *line,
@@ -234,6 +257,7 @@ impl<'a> Token<'a> {
         match self {
             Token::Tag { column, .. } => *column,
             Token::Comment { column, .. } => *column,
+            Token::DjangoComment { column, .. } => *column,
             Token::Text { column, .. } => *column,
             Token::Doctype { column, .. } => *column,
             Token::DjangoVar { column, .. } => *column,
@@ -245,6 +269,7 @@ impl<'a> Token<'a> {
         match self {
             Token::Tag { offset, .. } => *offset,
             Token::Comment { offset, .. } => *offset,
+            Token::DjangoComment { offset, .. } => *offset,
             Token::Text { offset, .. } => *offset,
             Token::Doctype { offset, .. } => *offset,
             Token::DjangoVar { offset, .. } => *offset,

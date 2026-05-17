@@ -1,6 +1,7 @@
 pub mod tokenizer;
 
 use crate::config::Config;
+use regex::Regex;
 use tokenizer::{Token, Tokenizer};
 
 pub fn format(config: &Config, source: &str) -> String {
@@ -8,13 +9,40 @@ pub fn format(config: &Config, source: &str) -> String {
     let mut indent_level = 0;
     let tokens: Vec<Token> = Tokenizer::new(source).collect();
     let mut i = 0;
+    let mut formatting_enabled = true;
 
     while i < tokens.len() {
-        match &tokens[i] {
+        let token = &tokens[i];
+        let raw = token.raw();
+
+        // Check for djlint:off/on
+        match token {
+            Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. } => {
+                if raw.contains("djlint:off") {
+                    formatting_enabled = false;
+                }
+            }
+            _ => {}
+        }
+
+        if !formatting_enabled {
+            output.push_str(raw);
+            if let Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. } =
+                token
+            {
+                if raw.contains("djlint:on") {
+                    formatting_enabled = true;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        match token {
             Token::Doctype { .. } => {
                 output.push_str("<!DOCTYPE html>\n");
             }
-            Token::Comment { raw, .. } => {
+            Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => {
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(raw.trim());
                 output.push('\n');
@@ -34,19 +62,9 @@ pub fn format(config: &Config, source: &str) -> String {
                 } else {
                     output.push_str(&" ".repeat(indent_level * config.indent));
 
-                    if raw.len() > config.max_attribute_length && !is_closing {
-                        // Reformat tag with wrapped attributes
-                        let formatted_tag = format_tag_with_wrapping(
-                            name,
-                            raw,
-                            *is_self_closing,
-                            indent_level,
-                            config,
-                        );
-                        output.push_str(&formatted_tag);
-                    } else {
-                        output.push_str(raw);
-                    }
+                    let formatted_tag =
+                        format_tag(name, raw, *is_self_closing, indent_level, config);
+                    output.push_str(&formatted_tag);
 
                     // Check if we can inline
                     if !is_self_closing {
@@ -80,7 +98,7 @@ pub fn format(config: &Config, source: &str) -> String {
                             } else {
                                 let child = &tokens[children[0]];
                                 match child {
-                                    Token::Text { .. } => true,
+                                    Token::Text { raw, .. } => !raw.trim().contains('\n'),
                                     Token::DjangoVar { .. } => true,
                                     Token::DjangoBlock { raw, .. } => {
                                         let tag_name = get_django_tag_name(raw).unwrap_or("");
@@ -145,28 +163,62 @@ pub fn format(config: &Config, source: &str) -> String {
         i += 1;
     }
 
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+
     output
 }
 
-fn format_tag_with_wrapping(
+fn format_tag(
     name: &str,
     raw: &str,
     is_self_closing: bool,
     indent_level: usize,
     config: &Config,
 ) -> String {
-    // Basic attribute extractor (very simple for now)
-    // We expect raw to be like <tag attr="val" attr2="val2">
-    let content = raw
-        .trim_start_matches('<')
-        .trim_end_matches('>')
-        .trim_end_matches('/');
-    let mut parts = content.split_whitespace();
-    let _tag_name = parts.next(); // Skip tag name
+    let attr_re = Regex::new(
+        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#,
+    )
+    .unwrap();
 
-    let attrs: Vec<&str> = parts.collect();
+    let start_pos = if raw.starts_with("</") {
+        2 + name.len()
+    } else {
+        1 + name.len()
+    };
+    let end_pos = if raw.ends_with("/>") {
+        raw.len() - 2
+    } else {
+        raw.len() - 1
+    };
+    let content = &raw[start_pos..end_pos];
+
+    let attrs: Vec<&str> = attr_re.find_iter(content).map(|m| m.as_str()).collect();
+
     if attrs.is_empty() {
-        return raw.to_string();
+        if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
+            return format!("<{} />", name);
+        } else {
+            return format!("<{}>", name);
+        }
+    }
+
+    // Check if we should wrap
+    let total_len = name.len() + 2 + attrs.iter().map(|a| a.len() + 1).sum::<usize>();
+
+    if total_len <= config.max_attribute_length {
+        let mut formatted = format!("<{}", name);
+        for attr in attrs {
+            formatted.push(' ');
+            formatted.push_str(attr);
+        }
+        if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
+            formatted.push_str(" />");
+        } else {
+            formatted.push('>');
+        }
+        return formatted;
     }
 
     let mut formatted = format!("<{}", name);
@@ -184,7 +236,7 @@ fn format_tag_with_wrapping(
         formatted.push_str(attr);
     }
 
-    if is_self_closing {
+    if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
         formatted.push_str(" />");
     } else {
         formatted.push('>');
