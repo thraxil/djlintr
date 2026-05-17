@@ -1,20 +1,19 @@
 {% extends "base.html" %}
-
-{% block title %}{{tag}}{% endblock %}
-
+{% block title %}{{ tag }}{% endblock %}
 {% block content %}
-
-    <h1><a href="{% url 'musician:musician_tags' %}">Tag</a>: {{tag}} {% if user.is_authenticated %}{% endif %}</h1>
-    
-
-{% if musicians %}
-    <ul>
-    {% for mt in musicians %}
-        <li><a href="{{ mt.musician.get_absolute_url }}">{{ mt.musician.name }}</a></li>
-    {% endfor %}
-    </ul>
-{% else %}
-    <p>No musicians with this tag.</p>
-{% endif %}
-
+    <h1>
+        <a href="{% url 'musician:musician_tags' %}">Tag</a>: {{ tag }}
+        {% if user.is_authenticated %}{% endif %}
+    </h1>
+    {% if musicians %}
+        <ul>
+            {% for mt in musicians %}
+                <li>
+                    <a href="{{ mt.musician.get_absolute_url }}">{{ mt.musician.name }}</a>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>No musicians with this tag.</p>
+    {% endif %}
 {% endblock %}
