@@ -62,13 +62,21 @@ fn is_html_block_tag(name: &str) -> bool {
     block_tags.contains(&name.to_lowercase().as_str())
 }
 
+fn is_structural_tag(name: &str) -> bool {
+    let structural_tags = [
+        "table", "tbody", "thead", "tfoot", "ul", "ol", "dl", "form", "dd",
+    ];
+    structural_tags.contains(&name.to_lowercase().as_str())
+}
+
 pub fn format(config: &Config, source: &str) -> String {
     let mut output = String::new();
-    let mut indent_level = 0;
+    let mut indent_level: usize = 0;
     let tokens: Vec<Token> = Tokenizer::new(source).collect();
     let mut i = 0;
     let mut formatting_enabled = true;
     let mut verbatim_tags = Vec::new();
+    let mut at_start_of_line = true;
 
     while i < tokens.len() {
         let token = &tokens[i];
@@ -99,12 +107,15 @@ pub fn format(config: &Config, source: &str) -> String {
 
         match token {
             Token::Doctype { .. } => {
+                output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str("<!DOCTYPE html>\n");
+                at_start_of_line = true;
             }
             Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => {
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(raw.trim());
                 output.push('\n');
+                at_start_of_line = true;
             }
             Token::Tag {
                 name,
@@ -122,6 +133,7 @@ pub fn format(config: &Config, source: &str) -> String {
                     output.push_str(&" ".repeat(indent_level * config.indent));
                     output.push_str(&format!("</{}>", name));
                     output.push('\n');
+                    at_start_of_line = true;
                 } else {
                     let (children, closing_idx) = get_children_info(i, &tokens);
 
@@ -148,13 +160,16 @@ pub fn format(config: &Config, source: &str) -> String {
                             let all_inline_ish = logical_elements.iter().all(|range| {
                                 if range.len() == 1 {
                                     let child = &tokens[range.start];
-                                    matches!(child, Token::Text { .. } | Token::DjangoVar { .. })
-                                        || if let Token::DjangoBlock { raw, .. } = child {
-                                            let tag_name = get_django_tag_name(raw).unwrap_or("");
-                                            !is_block_tag(tag_name, &config.custom_blocks)
-                                        } else {
-                                            false
-                                        }
+                                    if let Token::Text { raw, .. } = child {
+                                        !raw.trim().contains('\n')
+                                    } else if let Token::DjangoVar { .. } = child {
+                                        true
+                                    } else if let Token::DjangoBlock { raw, .. } = child {
+                                        let tag_name = get_django_tag_name(raw).unwrap_or("");
+                                        !is_block_tag(tag_name, &config.custom_blocks)
+                                    } else {
+                                        false
+                                    }
                                 } else {
                                     // It's a tag pair. Inline if it's an inline tag and its content is inlinable.
                                     if let Token::Tag { name: n, .. } = &tokens[range.start] {
@@ -167,18 +182,14 @@ pub fn format(config: &Config, source: &str) -> String {
                             });
 
                             let is_block_parent = is_html_block_tag(name);
+                            let is_structural = is_structural_tag(name);
 
                             if all_inline_ish {
-                                let can_collapse = if is_block_parent {
+                                let can_collapse = if is_structural {
+                                    false
+                                } else if is_block_parent {
                                     // Block parents only collapse if they have no tags and single-line text
                                     !has_tag
-                                        && !logical_elements.iter().any(|range| {
-                                            if let Token::Text { raw, .. } = &tokens[range.start] {
-                                                raw.trim().contains('\n')
-                                            } else {
-                                                false
-                                            }
-                                        })
                                 } else {
                                     // Non-block parents (like span) can collapse mixed inline content
                                     true
@@ -186,16 +197,19 @@ pub fn format(config: &Config, source: &str) -> String {
 
                                 if can_collapse {
                                     // Collapse
+                                    let mut content = String::new();
                                     for range in logical_elements {
-                                        output.push_str(&format_range_inlined(
+                                        content.push_str(&format_range_inlined(
                                             &range,
                                             &tokens,
                                             indent_level,
                                             config,
                                         ));
                                     }
+                                    output.push_str(content.trim());
                                     output.push_str(&format!("</{}>", name));
                                     output.push('\n');
+                                    at_start_of_line = true;
                                     i = j + 1;
                                     continue;
                                 } else {
@@ -203,18 +217,21 @@ pub fn format(config: &Config, source: &str) -> String {
                                     output.push('\n');
                                     output
                                         .push_str(&" ".repeat((indent_level + 1) * config.indent));
+                                    let mut content = String::new();
                                     for range in logical_elements {
-                                        output.push_str(&format_range_inlined(
+                                        content.push_str(&format_range_inlined(
                                             &range,
                                             &tokens,
                                             indent_level + 1,
                                             config,
                                         ));
                                     }
+                                    output.push_str(content.trim());
                                     output.push('\n');
                                     output.push_str(&" ".repeat(indent_level * config.indent));
                                     output.push_str(&format!("</{}>", name));
                                     output.push('\n');
+                                    at_start_of_line = true;
                                     i = j + 1;
                                     continue;
                                 }
@@ -224,7 +241,11 @@ pub fn format(config: &Config, source: &str) -> String {
 
                     if !is_verbatim {
                         output.push('\n');
+                        at_start_of_line = true;
+                    } else {
+                        at_start_of_line = false;
                     }
+
                     if !is_self_closing {
                         indent_level += 1;
                     }
@@ -233,12 +254,25 @@ pub fn format(config: &Config, source: &str) -> String {
             Token::Text { raw, .. } => {
                 if !verbatim_tags.is_empty() {
                     output.push_str(raw);
+                    at_start_of_line = raw.ends_with('\n');
                 } else {
                     let trimmed = raw.trim();
                     if !trimmed.is_empty() {
-                        output.push_str(&" ".repeat(indent_level * config.indent));
-                        output.push_str(trimmed);
-                        output.push('\n');
+                        let indent = " ".repeat(indent_level * config.indent);
+                        for line in trimmed.lines() {
+                            output.push_str(&indent);
+                            output.push_str(line.trim());
+                            output.push('\n');
+                        }
+                        at_start_of_line = true;
+                    } else if raw.contains('\n') {
+                        if !at_start_of_line {
+                            output.push('\n');
+                        }
+                        at_start_of_line = true;
+                    } else {
+                        output.push_str(raw);
+                        at_start_of_line = false;
                     }
                 }
             }
@@ -246,20 +280,18 @@ pub fn format(config: &Config, source: &str) -> String {
                 output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(&normalize_django(raw));
                 output.push('\n');
+                at_start_of_line = true;
             }
             Token::DjangoBlock { raw, .. } => {
                 let tag_name = get_django_tag_name(raw).unwrap_or("");
                 let is_closing = tag_name.starts_with("end");
                 let actual_tag_name = if is_closing { &tag_name[3..] } else { tag_name };
-
                 let is_block = is_block_tag(actual_tag_name, &config.custom_blocks);
                 let is_reindent = is_reindent_tag(tag_name);
 
                 if (is_closing && is_block) || is_reindent {
                     indent_level = indent_level.saturating_sub(1);
                 }
-
-                output.push_str(&" ".repeat(indent_level * config.indent));
 
                 // Check if we can inline
                 if !is_closing && is_block {
@@ -275,27 +307,50 @@ pub fn format(config: &Config, source: &str) -> String {
                                 let range = &logical_elements[0];
                                 if range.len() == 1 {
                                     let child = &tokens[range.start];
-                                    matches!(child, Token::Text { .. } | Token::DjangoVar { .. })
+                                    if let Token::Text { raw, .. } = child {
+                                        !raw.trim().contains('\n')
+                                    } else {
+                                        matches!(child, Token::DjangoVar { .. })
+                                    }
                                 } else {
-                                    // It's a tag pair. Django blocks ARE aggressive and inline these.
-                                    // We need to check if the tag pair ITSELF can be inlined.
-                                    is_tag_range_inlinable(range, &tokens, config)
+                                    // It's a tag pair.
+                                    if let Token::Tag { name: n, .. } = &tokens[range.start] {
+                                        let is_block = is_html_block_tag(n);
+                                        if is_block {
+                                            // Don't inline block tags if they contain other tags
+                                            let children_indices: Vec<usize> =
+                                                (range.start + 1..range.end - 1).collect();
+                                            let sub_elements =
+                                                get_logical_elements(&children_indices, &tokens);
+                                            let has_sub_tag =
+                                                sub_elements.iter().any(|r| r.len() > 1);
+                                            !has_sub_tag
+                                                && is_tag_range_inlinable(range, &tokens, config)
+                                        } else {
+                                            is_tag_range_inlinable(range, &tokens, config)
+                                        }
+                                    } else {
+                                        false
+                                    }
                                 }
                             };
 
                             if can_inline {
+                                output.push_str(&" ".repeat(indent_level * config.indent));
                                 output.push_str(&normalize_django(raw));
-                                if !logical_elements.is_empty() {
-                                    let range = &logical_elements[0];
-                                    output.push_str(&format_range_inlined(
-                                        range,
+                                let mut content = String::new();
+                                for range in logical_elements {
+                                    content.push_str(&format_range_inlined(
+                                        &range,
                                         &tokens,
-                                        indent_level,
+                                        indent_level + 1,
                                         config,
                                     ));
                                 }
+                                output.push_str(content.trim());
                                 output.push_str(&normalize_django(tokens[j].raw()));
                                 output.push('\n');
+                                at_start_of_line = true;
                                 i = j + 1;
                                 continue;
                             }
@@ -303,8 +358,10 @@ pub fn format(config: &Config, source: &str) -> String {
                     }
                 }
 
+                output.push_str(&" ".repeat(indent_level * config.indent));
                 output.push_str(&normalize_django(raw));
                 output.push('\n');
+                at_start_of_line = true;
 
                 if (!is_closing && is_block) || is_reindent {
                     indent_level += 1;
@@ -528,7 +585,7 @@ fn get_logical_elements(children: &[usize], tokens: &[Token]) -> Vec<std::ops::R
     while i < children.len() {
         let idx = children[i];
         match &tokens[idx] {
-            Token::Text { raw, .. } if raw.trim().is_empty() => {
+            Token::Text { raw, .. } if raw.trim().is_empty() && raw.contains('\n') => {
                 i += 1;
             }
             Token::Tag {
@@ -588,13 +645,16 @@ fn is_tag_range_inlinable(
     logical_elements.iter().all(|range| {
         if range.len() == 1 {
             let child = &tokens[range.start];
-            matches!(child, Token::Text { .. } | Token::DjangoVar { .. })
-                || if let Token::DjangoBlock { raw, .. } = child {
-                    let tag_name = get_django_tag_name(raw).unwrap_or("");
-                    !is_block_tag(tag_name, &config.custom_blocks)
-                } else {
-                    false
-                }
+            if let Token::Text { raw, .. } = child {
+                !raw.trim().contains('\n')
+            } else if let Token::DjangoVar { .. } = child {
+                true
+            } else if let Token::DjangoBlock { raw, .. } = child {
+                let tag_name = get_django_tag_name(raw).unwrap_or("");
+                !is_block_tag(tag_name, &config.custom_blocks)
+            } else {
+                false
+            }
         } else {
             // It's a tag pair.
             if let Token::Tag { name: n, .. } = &tokens[range.start] {

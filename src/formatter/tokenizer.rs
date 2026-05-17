@@ -276,4 +276,8 @@ impl<'a> Token<'a> {
             Token::DjangoBlock { offset, .. } => *offset,
         }
     }
+
+    pub fn ends_on_line(&self) -> usize {
+        self.line() + self.raw().chars().filter(|&c| c == '\n').count()
+    }
 }
