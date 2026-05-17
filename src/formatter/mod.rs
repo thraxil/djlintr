@@ -58,6 +58,7 @@ fn is_html_block_tag(name: &str) -> bool {
         "tr",
         "ul",
         "video",
+        "svg",
     ];
     block_tags.contains(&name.to_lowercase().as_str())
 }
@@ -67,6 +68,28 @@ fn is_structural_tag(name: &str) -> bool {
         "table", "tbody", "thead", "tfoot", "ul", "ol", "dl", "form", "dd",
     ];
     structural_tags.contains(&name.to_lowercase().as_str())
+}
+
+fn should_indent_children(name: &str) -> bool {
+    let no_indent_tags = [
+        "g",
+        "defs",
+        "clippath",
+        "mask",
+        "pattern",
+        "lineargradient",
+        "radialgradient",
+        "symbol",
+        "marker",
+    ];
+    !no_indent_tags.contains(&name.to_lowercase().as_str())
+}
+
+fn should_wrap_attributes(name: &str) -> bool {
+    let no_wrap_tags = [
+        "path", "circle", "rect", "line", "polyline", "polygon", "ellipse",
+    ];
+    !no_wrap_tags.contains(&name.to_lowercase().as_str())
 }
 
 pub fn format(config: &Config, source: &str) -> String {
@@ -129,7 +152,9 @@ pub fn format(config: &Config, source: &str) -> String {
                     if verbatim_tags.last() == Some(&name_lower) {
                         verbatim_tags.pop();
                     }
-                    indent_level = indent_level.saturating_sub(1);
+                    if should_indent_children(name) {
+                        indent_level = indent_level.saturating_sub(1);
+                    }
                     output.push_str(&" ".repeat(indent_level * config.indent));
                     output.push_str(&format!("</{}>", name));
                     output.push('\n');
@@ -260,7 +285,7 @@ pub fn format(config: &Config, source: &str) -> String {
                         at_start_of_line = false;
                     }
 
-                    if !is_self_closing {
+                    if !is_self_closing && should_indent_children(name) {
                         indent_level += 1;
                     }
                 }
@@ -474,7 +499,7 @@ fn format_tag(
     // Check if we should wrap
     let total_len = name.len() + 2 + attrs.iter().map(|a| a.len() + 1).sum::<usize>();
 
-    if total_len <= config.max_attribute_length {
+    if total_len <= config.max_attribute_length || !should_wrap_attributes(name) {
         let mut formatted = format!("<{}", name);
         for (i, attr) in attrs.iter().enumerate() {
             let starts_with_block = attr.starts_with("{%");
