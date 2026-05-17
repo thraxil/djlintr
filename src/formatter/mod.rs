@@ -48,18 +48,55 @@ pub fn format(config: &Config, source: &str) -> String {
                         output.push_str(raw);
                     }
 
-                    // Check if next token is the closing tag for this one
-                    if !is_self_closing && i + 1 < tokens.len() {
-                        if let Token::Tag {
-                            name: next_name,
-                            is_closing: true,
-                            ..
-                        } = &tokens[i + 1]
-                        {
-                            if next_name == name {
-                                output.push_str(tokens[i + 1].raw());
+                    // Check if we can inline
+                    if !is_self_closing {
+                        let mut j = i + 1;
+                        let mut children = Vec::new();
+                        while j < tokens.len() {
+                            match &tokens[j] {
+                                Token::Text { raw, .. } if raw.trim().is_empty() => {
+                                    j += 1;
+                                }
+                                Token::Tag {
+                                    name: next_name,
+                                    is_closing: true,
+                                    ..
+                                } if next_name == name => {
+                                    break;
+                                }
+                                _ => {
+                                    children.push(j);
+                                    j += 1;
+                                    if children.len() > 1 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if j < tokens.len() && children.len() <= 1 {
+                            let can_inline = if children.is_empty() {
+                                true
+                            } else {
+                                let child = &tokens[children[0]];
+                                match child {
+                                    Token::Text { .. } => true,
+                                    Token::DjangoVar { .. } => true,
+                                    Token::DjangoBlock { raw, .. } => {
+                                        let tag_name = get_django_tag_name(raw).unwrap_or("");
+                                        !is_block_tag(tag_name, &config.custom_blocks)
+                                    }
+                                    _ => false,
+                                }
+                            };
+
+                            if can_inline {
+                                if !children.is_empty() {
+                                    output.push_str(tokens[children[0]].raw().trim());
+                                }
+                                output.push_str(tokens[j].raw());
                                 output.push('\n');
-                                i += 2;
+                                i = j + 1;
                                 continue;
                             }
                         }
@@ -133,7 +170,13 @@ fn format_tag_with_wrapping(
     }
 
     let mut formatted = format!("<{}", name);
-    let attr_indent = " ".repeat((indent_level + 1) * config.indent);
+    let attr_indent = " ".repeat(indent_level * config.indent + name.len() + 2);
+
+    let mut attrs = attrs.into_iter();
+    if let Some(attr) = attrs.next() {
+        formatted.push(' ');
+        formatted.push_str(attr);
+    }
 
     for attr in attrs {
         formatted.push('\n');
@@ -142,12 +185,8 @@ fn format_tag_with_wrapping(
     }
 
     if is_self_closing {
-        formatted.push('\n');
-        formatted.push_str(&" ".repeat(indent_level * config.indent));
-        formatted.push_str("/>");
+        formatted.push_str(" />");
     } else {
-        formatted.push('\n');
-        formatted.push_str(&" ".repeat(indent_level * config.indent));
         formatted.push('>');
     }
 
