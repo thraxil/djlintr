@@ -123,8 +123,12 @@ pub fn format(config: &Config, source: &str) -> String {
                     output.push_str(&format!("</{}>", name));
                     output.push('\n');
                 } else {
-                    let is_verbatim =
-                        matches!(name_lower.as_str(), "style" | "script") && !is_self_closing;
+                    let (children, closing_idx) = get_children_info(i, &tokens);
+
+                    let is_verbatim = matches!(name_lower.as_str(), "style" | "script")
+                        && !is_self_closing
+                        && children.iter().any(|&idx| tokens[idx].raw().contains('\n'));
+
                     if is_verbatim {
                         verbatim_tags.push(name_lower.clone());
                     }
@@ -136,9 +140,7 @@ pub fn format(config: &Config, source: &str) -> String {
                     output.push_str(&formatted_tag);
 
                     // Check if we can inline
-                    if !is_self_closing {
-                        let (children, closing_idx) = get_children_info(i, &tokens);
-
+                    if !is_self_closing && !is_verbatim {
                         if let Some(j) = closing_idx {
                             let logical_elements = get_logical_elements(&children, &tokens);
 
@@ -195,9 +197,6 @@ pub fn format(config: &Config, source: &str) -> String {
                                     output.push_str(&format!("</{}>", name));
                                     output.push('\n');
                                     i = j + 1;
-                                    if is_verbatim {
-                                        verbatim_tags.pop();
-                                    }
                                     continue;
                                 } else {
                                     // Expand parent, but join children on one line
@@ -217,9 +216,6 @@ pub fn format(config: &Config, source: &str) -> String {
                                     output.push_str(&format!("</{}>", name));
                                     output.push('\n');
                                     i = j + 1;
-                                    if is_verbatim {
-                                        verbatim_tags.pop();
-                                    }
                                     continue;
                                 }
                             }
@@ -235,7 +231,7 @@ pub fn format(config: &Config, source: &str) -> String {
                 }
             }
             Token::Text { raw, .. } => {
-                if !verbatim_tags.is_empty() && raw.contains('\n') {
+                if !verbatim_tags.is_empty() {
                     output.push_str(raw);
                 } else {
                     let trimmed = raw.trim();
