@@ -164,7 +164,14 @@ pub fn format(config: &Config, source: &str) -> String {
 
                     let is_verbatim = matches!(name_lower.as_str(), "style" | "script")
                         && !is_self_closing
-                        && children.iter().any(|&idx| tokens[idx].raw().contains('\n'));
+                        && children.iter().any(|&idx| {
+                            let child = &tokens[idx];
+                            if let Token::Text { raw, .. } = child {
+                                raw.trim().contains('\n')
+                            } else {
+                                child.raw().contains('\n')
+                            }
+                        });
 
                     if is_verbatim {
                         verbatim_tags.push(name_lower.clone());
@@ -184,17 +191,7 @@ pub fn format(config: &Config, source: &str) -> String {
                             let has_tag = logical_elements.iter().any(|range| range.len() > 1);
                             let all_inline_ish = logical_elements.iter().all(|range| {
                                 if range.len() == 1 {
-                                    let child = &tokens[range.start];
-                                    if let Token::Text { raw, .. } = child {
-                                        !raw.trim().contains('\n')
-                                    } else if let Token::DjangoVar { .. } = child {
-                                        true
-                                    } else if let Token::DjangoBlock { raw, .. } = child {
-                                        let tag_name = get_django_tag_name(raw).unwrap_or("");
-                                        !is_block_tag(tag_name, &config.custom_blocks)
-                                    } else {
-                                        false
-                                    }
+                                    is_inline_token(&tokens[range.start], config)
                                 } else {
                                     // It's a tag pair. Inline if it's an inline tag and its content is inlinable.
                                     if let Token::Tag { name: n, .. } = &tokens[range.start] {
@@ -275,8 +272,21 @@ pub fn format(config: &Config, source: &str) -> String {
                     }
 
                     if !is_verbatim {
-                        output.push('\n');
-                        at_start_of_line = true;
+                        let mut should_newline = true;
+                        if is_inline_tag(name) && i + 1 < tokens.len() {
+                            let next_token = &tokens[i + 1];
+                            if next_token.line() == token.ends_on_line()
+                                && is_inline_token(next_token, config)
+                            {
+                                should_newline = false;
+                            }
+                        }
+                        if should_newline {
+                            output.push('\n');
+                            at_start_of_line = true;
+                        } else {
+                            at_start_of_line = false;
+                        }
                     } else {
                         at_start_of_line = false;
                     }
@@ -293,13 +303,35 @@ pub fn format(config: &Config, source: &str) -> String {
                 } else {
                     let trimmed = raw.trim();
                     if !trimmed.is_empty() {
-                        let indent = " ".repeat(indent_level * config.indent);
-                        for line in trimmed.lines() {
-                            output.push_str(&indent);
+                        let lines: Vec<&str> = trimmed.lines().collect();
+                        for (idx, line) in lines.iter().enumerate() {
+                            if at_start_of_line {
+                                output.push_str(&" ".repeat(indent_level * config.indent));
+                            }
                             output.push_str(line.trim());
-                            output.push('\n');
+
+                            let is_last_line = idx == lines.len() - 1;
+                            if is_last_line {
+                                let mut should_newline = true;
+                                if i + 1 < tokens.len() {
+                                    let next_token = &tokens[i + 1];
+                                    if next_token.line() == token.ends_on_line()
+                                        && is_inline_token(next_token, config)
+                                    {
+                                        should_newline = false;
+                                    }
+                                }
+                                if should_newline {
+                                    output.push('\n');
+                                    at_start_of_line = true;
+                                } else {
+                                    at_start_of_line = false;
+                                }
+                            } else {
+                                output.push('\n');
+                                at_start_of_line = true;
+                            }
                         }
-                        at_start_of_line = true;
                     } else if raw.contains('\n') {
                         if !at_start_of_line {
                             output.push('\n');
@@ -309,10 +341,27 @@ pub fn format(config: &Config, source: &str) -> String {
                 }
             }
             Token::DjangoVar { raw, .. } => {
-                output.push_str(&" ".repeat(indent_level * config.indent));
+                if at_start_of_line {
+                    output.push_str(&" ".repeat(indent_level * config.indent));
+                }
                 output.push_str(&normalize_django(raw));
-                output.push('\n');
-                at_start_of_line = true;
+
+                let mut should_newline = true;
+                if i + 1 < tokens.len() {
+                    let next_token = &tokens[i + 1];
+                    if next_token.line() == token.ends_on_line()
+                        && is_inline_token(next_token, config)
+                    {
+                        should_newline = false;
+                    }
+                }
+
+                if should_newline {
+                    output.push('\n');
+                    at_start_of_line = true;
+                } else {
+                    at_start_of_line = false;
+                }
             }
             Token::DjangoBlock { raw, .. } => {
                 let tag_name = get_django_tag_name(raw).unwrap_or("");
@@ -334,12 +383,7 @@ pub fn format(config: &Config, source: &str) -> String {
 
                         let all_inline_ish = logical_elements.iter().all(|range| {
                             if range.len() == 1 {
-                                let child = &tokens[range.start];
-                                if let Token::Text { raw, .. } = child {
-                                    !raw.trim().contains('\n')
-                                } else {
-                                    matches!(child, Token::DjangoVar { .. })
-                                }
+                                is_inline_token(&tokens[range.start], config)
                             } else {
                                 // It's a tag pair.
                                 if let Token::Tag { name: n, .. } = &tokens[range.start] {
@@ -378,7 +422,9 @@ pub fn format(config: &Config, source: &str) -> String {
                                 + normalized_end.len();
 
                             if projected_len <= config.max_line_length {
-                                output.push_str(&" ".repeat(indent_level * config.indent));
+                                if at_start_of_line {
+                                    output.push_str(&" ".repeat(indent_level * config.indent));
+                                }
                                 output.push_str(&normalized_start);
                                 output.push_str(collapsed_content);
                                 output.push_str(&normalized_end);
@@ -388,7 +434,9 @@ pub fn format(config: &Config, source: &str) -> String {
                                 continue;
                             } else if !logical_elements.is_empty() {
                                 // Expand but join children
-                                output.push_str(&" ".repeat(indent_level * config.indent));
+                                if at_start_of_line {
+                                    output.push_str(&" ".repeat(indent_level * config.indent));
+                                }
                                 output.push_str(&normalized_start);
                                 output.push('\n');
                                 output.push_str(&" ".repeat((indent_level + 1) * config.indent));
@@ -405,13 +453,33 @@ pub fn format(config: &Config, source: &str) -> String {
                     }
                 }
 
-                output.push_str(&" ".repeat(indent_level * config.indent));
+                if at_start_of_line {
+                    output.push_str(&" ".repeat(indent_level * config.indent));
+                }
                 output.push_str(&normalize_django(raw));
-                output.push('\n');
-                at_start_of_line = true;
+
+                let mut should_newline = true;
+                if !is_block && i + 1 < tokens.len() {
+                    let next_token = &tokens[i + 1];
+                    if next_token.line() == token.ends_on_line()
+                        && is_inline_token(next_token, config)
+                    {
+                        should_newline = false;
+                    }
+                }
+
+                if should_newline {
+                    output.push('\n');
+                    at_start_of_line = true;
+                } else {
+                    at_start_of_line = false;
+                }
 
                 if (!is_closing && is_block) || is_reindent {
-                    indent_level += 1;
+                    let (_, closing_idx) = get_children_info(i, &tokens);
+                    if closing_idx.is_some() || is_reindent {
+                        indent_level += 1;
+                    }
                 }
             }
         }
@@ -606,6 +674,24 @@ fn is_reindent_tag(name: &str) -> bool {
     matches!(name, "else" | "elif" | "empty")
 }
 
+fn is_inline_token(token: &Token, config: &Config) -> bool {
+    match token {
+        Token::DjangoVar { .. } => true,
+        Token::DjangoBlock { raw, .. } => {
+            let tag_name = get_django_tag_name(raw).unwrap_or("");
+            if is_reindent_tag(tag_name) {
+                return false;
+            }
+            let is_closing = tag_name.starts_with("end");
+            let actual_tag_name = if is_closing { &tag_name[3..] } else { tag_name };
+            !is_block_tag(actual_tag_name, &config.custom_blocks)
+        }
+        Token::Text { raw, .. } => !raw.trim().contains('\n'),
+        Token::Tag { name, .. } => is_inline_tag(name),
+        _ => false,
+    }
+}
+
 fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
     let blocks = [
         "block",
@@ -622,6 +708,8 @@ fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
         "localize",
         "compress",
         "comment",
+        "load",
+        "extends",
     ];
     blocks.contains(&name) || custom_blocks.iter().any(|b| b == name)
 }
