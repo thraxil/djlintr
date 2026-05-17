@@ -25,6 +25,7 @@
             pkg-config
             openssl
             cargo-release
+            python314
           ];
 
           shellHook = ''
