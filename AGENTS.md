@@ -125,6 +125,8 @@ use strict red/green TDD. This means:
 - repeat this process until you are confident that the entire new
   feature is implemented, the bug is fixed, etc.
 
-DO NOT delete tests after finishing the process. You MAY run
+IMPORTANT: DO NOT delete tests after finishing the process. If a test
+is outdated or misleading, you must explain this to the user and get
+explicit permission to remove or update it. You MAY run
 individual tests instead of the entire suite to speed up the process,
 but the entire suite must pass before you are done.
