@@ -32,6 +32,10 @@ use rstest::rstest;
     "{% for deck in decks %}<option>{{ deck.name }}</option>{% endfor %}",
     "{% for deck in decks %}<option>{{ deck.name }}</option>{% endfor %}\n"
 )]
+#[case(
+    "{% block title %}<h1 class=\"foo\">Internal Server Error</h1>{% endblock %}",
+    "{% block title %}<h1 class=\"foo\">Internal Server Error</h1>{% endblock %}\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
