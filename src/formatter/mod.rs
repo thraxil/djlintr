@@ -100,21 +100,11 @@ pub fn format(config: &Config, source: &str) -> String {
     let mut formatting_enabled = true;
     let mut verbatim_tags = Vec::new();
     let mut at_start_of_line = true;
-    let mut parent_stack: Vec<usize> = Vec::new();
+    let mut parent_stack: Vec<(usize, bool)> = Vec::new();
 
     while i < tokens.len() {
         let token = &tokens[i];
         let raw = token.raw();
-
-        // Check for djlint:off/on
-        match token {
-            Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. }
-                if raw.contains("djlint:off") =>
-            {
-                formatting_enabled = false;
-            }
-            _ => {}
-        }
 
         if !formatting_enabled {
             if let Token::Comment { .. } | Token::DjangoBlock { .. } | Token::DjangoComment { .. } =
@@ -142,13 +132,18 @@ pub fn format(config: &Config, source: &str) -> String {
                 output.push_str("<!DOCTYPE html>\n");
                 at_start_of_line = true;
             }
-            Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => {
-                if !raw.contains("djlint:off") && !raw.contains("djlint:on") {
+            Token::Comment { raw: r, .. } | Token::DjangoComment { raw: r, .. } => {
+                let is_control = r.contains("djlint:off") || r.contains("djlint:on");
+                if !is_control {
                     output.push_str(&" ".repeat(indent_level * config.indent));
                 }
-                output.push_str(raw.trim());
+                output.push_str(r.trim());
                 output.push('\n');
                 at_start_of_line = true;
+                
+                if r.contains("djlint:off") {
+                    formatting_enabled = false;
+                }
             }
             Token::Tag {
                 name,
@@ -162,9 +157,15 @@ pub fn format(config: &Config, source: &str) -> String {
                     if verbatim_tags.last() == Some(&name_lower) {
                         verbatim_tags.pop();
                     }
-                    if should_indent_children(name) {
+
+                    let mut incremented = false;
+                    if let Some((_, inc)) = parent_stack.pop() {
+                        incremented = inc;
+                    }
+                    if incremented {
                         indent_level = indent_level.saturating_sub(1);
                     }
+
                     if !at_start_of_line && !is_inline_tag(name) {
                         trim_trailing_whitespace(&mut output);
                         output.push('\n');
@@ -214,6 +215,12 @@ pub fn format(config: &Config, source: &str) -> String {
                         verbatim_tags.push(name_lower.clone());
                     }
 
+                    if !at_start_of_line && is_html_block_tag(name) {
+                        trim_trailing_whitespace(&mut output);
+                        output.push('\n');
+                        at_start_of_line = true;
+                    }
+
                     if at_start_of_line {
                         output.push_str(&" ".repeat(indent_level * config.indent));
                     }
@@ -223,6 +230,7 @@ pub fn format(config: &Config, source: &str) -> String {
                     output.push_str(&formatted_tag);
 
                     // Check if we can inline
+                    let mut did_collapse = false;
                     if !is_self_closing && !is_verbatim {
                         if let Some(j) = closing_idx {
                             let logical_elements = get_logical_elements(&children, &tokens);
@@ -257,7 +265,6 @@ pub fn format(config: &Config, source: &str) -> String {
                                     )
                                 }
                             });
-
                             if all_inline_ish {
                                 let can_collapse = if is_structural {
                                     false
@@ -292,12 +299,17 @@ pub fn format(config: &Config, source: &str) -> String {
                                         output.push_str(collapsed_content);
                                         output.push_str(&format!("</{}>", name));
                                         let mut should_newline = true;
-                                        if is_inline_tag(name) && i + 1 < tokens.len() {
-                                            let next_token = &tokens[i + 1];
+                                        if is_inline_tag(name) && j + 1 < tokens.len() {
+                                            let next_token = &tokens[j + 1];
                                             if next_token.line() == tokens[j].ends_on_line()
                                                 && is_inline_ish(next_token, config)
                                             {
                                                 should_newline = false;
+                                            }
+                                            if let Token::Text { raw: r, .. } = next_token {
+                                                if r.starts_with('\n') || r.starts_with("\r\n") {
+                                                    should_newline = false;
+                                                }
                                             }
                                         }
                                         if should_newline {
@@ -308,13 +320,11 @@ pub fn format(config: &Config, source: &str) -> String {
                                             at_start_of_line = false;
                                         }
                                         i = j + 1;
-                                        continue;
+                                        did_collapse = true;
                                     }
                                 }
 
-                                // If not collapsed, we still might join children on one line if they are all inline-ish
-                                // and the parent is NOT structural.
-                                if !is_structural
+                                if !did_collapse && !is_structural
                                     && !logical_elements.is_empty()
                                     && !is_block_parent
                                 {
@@ -336,12 +346,17 @@ pub fn format(config: &Config, source: &str) -> String {
                                     output.push_str(&" ".repeat(indent_level * config.indent));
                                     output.push_str(&format!("</{}>", name));
                                     let mut should_newline = true;
-                                    if is_inline_tag(name) && i + 1 < tokens.len() {
-                                        let next_token = &tokens[i + 1];
+                                    if is_inline_tag(name) && j + 1 < tokens.len() {
+                                        let next_token = &tokens[j + 1];
                                         if next_token.line() == tokens[j].ends_on_line()
                                             && is_inline_ish(next_token, config)
                                         {
                                             should_newline = false;
+                                        }
+                                        if let Token::Text { raw: r, .. } = next_token {
+                                            if r.starts_with('\n') || r.starts_with("\r\n") {
+                                                should_newline = false;
+                                            }
                                         }
                                     }
                                     if should_newline {
@@ -352,43 +367,52 @@ pub fn format(config: &Config, source: &str) -> String {
                                         at_start_of_line = false;
                                     }
                                     i = j + 1;
-                                    continue;
+                                    did_collapse = true;
                                 }
                             }
                         }
                     }
 
-                    if !is_verbatim {
-                        let mut should_newline = true;
-                        if is_inline_tag(name) && i + 1 < tokens.len() {
-                            let next_token = &tokens[i + 1];
-                            if next_token.line() == token.ends_on_line()
-                                && is_inline_ish(next_token, config)
-                            {
-                                should_newline = false;
-                            }
-                            if let Token::Text { raw: r, .. } = next_token {
-                                if r.starts_with('\n') || r.starts_with("\r\n") {
+                    if !did_collapse {
+                        if !is_verbatim {
+                            let mut should_newline = true;
+                            if is_inline_tag(name) && i + 1 < tokens.len() {
+                                let next_token = &tokens[i + 1];
+                                if next_token.line() == token.ends_on_line()
+                                    && is_inline_ish(next_token, config)
+                                {
                                     should_newline = false;
                                 }
+                                if let Token::Text { raw: r, .. } = next_token {
+                                    if r.starts_with('\n') || r.starts_with("\r\n") {
+                                        should_newline = false;
+                                    }
+                                }
                             }
-                        }
-                        if should_newline {
-                            trim_trailing_whitespace(&mut output);
-                            output.push('\n');
-                            at_start_of_line = true;
+                            if should_newline {
+                                trim_trailing_whitespace(&mut output);
+                                output.push('\n');
+                                at_start_of_line = true;
+                            } else {
+                                at_start_of_line = false;
+                            }
                         } else {
                             at_start_of_line = false;
                         }
-                    } else {
-                        at_start_of_line = false;
-                    }
 
-                    if !is_self_closing && should_indent_children(name) {
-                        indent_level += 1;
+                        let mut incremented = false;
+                        if !is_self_closing && should_indent_children(name) {
+                            if !is_inline_tag(name) {
+                                indent_level += 1;
+                                incremented = true;
+                            }
+                        }
+                        if !is_self_closing {
+                            parent_stack.push((i, incremented));
+                        }
                     }
-                    if !is_self_closing {
-                        parent_stack.push(i);
+                    if did_collapse {
+                        continue;
                     }
                 }
             }
@@ -495,10 +519,17 @@ pub fn format(config: &Config, source: &str) -> String {
                 let is_reindent = is_reindent_tag(tag_name);
 
                 if (is_closing && is_block) || is_reindent {
-                    indent_level = indent_level.saturating_sub(1);
+                    let mut incremented = false;
+                    if let Some((_, inc)) = parent_stack.pop() {
+                        incremented = inc;
+                    }
+                    if incremented {
+                        indent_level = indent_level.saturating_sub(1);
+                    }
                 }
 
                 // Check if we can inline
+                let mut did_collapse = false;
                 if !is_closing && is_block {
                     let (children, closing_idx) = get_children_info(i, &tokens);
 
@@ -560,7 +591,7 @@ pub fn format(config: &Config, source: &str) -> String {
                                 output.push('\n');
                                 at_start_of_line = true;
                                 i = j + 1;
-                                continue;
+                                did_collapse = true;
                             } else if !logical_elements.is_empty() && !has_any_tag_or_django {
                                 // Expand but join children
                                 if at_start_of_line {
@@ -579,65 +610,65 @@ pub fn format(config: &Config, source: &str) -> String {
                                 output.push('\n');
                                 at_start_of_line = true;
                                 i = j + 1;
-                                continue;
+                                did_collapse = true;
                             }
                         }
                     }
                 }
 
-                if at_start_of_line {
-                    output.push_str(&" ".repeat(indent_level * config.indent));
-                }
-                output.push_str(&normalize_django(raw));
-
-                let mut should_newline = true;
-                if !is_block && !is_reindent && i + 1 < tokens.len() {
-                    let next_token = &tokens[i + 1];
-                    if next_token.line() == token.ends_on_line()
-                        && is_inline_ish(next_token, config)
-                    {
-                        should_newline = false;
+                if !did_collapse {
+                    if !at_start_of_line && (is_block || is_reindent) {
+                        trim_trailing_whitespace(&mut output);
+                        output.push('\n');
+                        at_start_of_line = true;
                     }
-                    if let Token::Text { raw: r, .. } = next_token {
-                        if r.starts_with('\n') || r.starts_with("\r\n") {
+
+                    if at_start_of_line {
+                        output.push_str(&" ".repeat(indent_level * config.indent));
+                    }
+                    output.push_str(&normalize_django(raw));
+                    
+                    if raw.contains("djlint:off") {
+                        formatting_enabled = false;
+                    }
+
+                    let mut should_newline = true;
+                    if !is_block && !is_reindent && i + 1 < tokens.len() {
+                        let next_token = &tokens[i + 1];
+                        if next_token.line() == token.ends_on_line()
+                            && is_inline_ish(next_token, config)
+                        {
                             should_newline = false;
+                        }
+                        if let Token::Text { raw: r, .. } = next_token {
+                            if r.starts_with('\n') || r.starts_with("\r\n") {
+                                should_newline = false;
+                            }
+                        }
+                    }
+
+                    if should_newline {
+                        trim_trailing_whitespace(&mut output);
+                        output.push('\n');
+                        at_start_of_line = true;
+                    } else {
+                        at_start_of_line = false;
+                    }
+
+                    let mut incremented = false;
+                    if (!is_closing && is_block) || is_reindent {
+                        let (_, closing_idx) = get_children_info(i, &tokens);
+                        if closing_idx.is_some() || is_reindent {
+                            indent_level += 1;
+                            incremented = true;
+                            parent_stack.push((i, incremented));
                         }
                     }
                 }
-
-                if should_newline {
-                    trim_trailing_whitespace(&mut output);
-                    output.push('\n');
-                    at_start_of_line = true;
-                } else {
-                    at_start_of_line = false;
-                }
-
-                if (!is_closing && is_block) || is_reindent {
-                    let (_, closing_idx) = get_children_info(i, &tokens);
-                    if closing_idx.is_some() || is_reindent {
-                        indent_level += 1;
-                        parent_stack.push(i);
-                    }
+                if did_collapse {
+                    continue;
                 }
             }
-        }
-
-        // Pop from parent_stack if we just finished a closing tag or a closing django block
-        let token = &tokens[i];
-        match token {
-            Token::Tag {
-                is_closing: true, ..
-            } => {
-                parent_stack.pop();
-            }
-            Token::DjangoBlock { raw, .. } => {
-                let tag_name = get_django_tag_name(raw).unwrap_or("");
-                if tag_name.starts_with("end") {
-                    parent_stack.pop();
-                }
-            }
-            _ => {}
         }
 
         i += 1;
@@ -714,7 +745,8 @@ fn format_tag(
     let final_content = attr_re
         .replace_all(content, |caps: &regex::Captures| {
             let m = caps.get(0).unwrap().as_str();
-            if m.starts_with("style=") {
+            let style_attr_re = Regex::new(r#"^style\s*="#).unwrap();
+            if style_attr_re.is_match(m) {
                 format_style_attribute(m, "")
             } else {
                 normalize_django(m)
@@ -728,9 +760,8 @@ fn format_tag(
         attrs.iter().map(|a| a.len()).sum::<usize>() + attrs.len() - 1
     };
 
-    if (attrs_total_len <= config.max_attribute_length || !should_wrap_attributes(name))
-        && !raw.contains('\n')
-    {
+    if attrs_total_len <= config.max_attribute_length || !should_wrap_attributes(name) {
+
         let mut formatted = if raw.starts_with("</") {
             format!("</{}", name)
         } else {
@@ -786,9 +817,9 @@ fn format_style_attribute(attr: &str, indent: &str) -> String {
     let content_end = attr.rfind(quote).unwrap_or(attr.len());
     let content = &attr[content_start..content_end];
 
-    let props: Vec<&str> = content
+    let props: Vec<String> = content
         .split(';')
-        .map(|s| s.trim())
+        .map(|s| normalize_django(s.trim()))
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1013,6 +1044,20 @@ fn is_tag_range_inlinable(
     tokens: &[Token],
     config: &Config,
 ) -> bool {
+    let token = &tokens[range.start];
+    if let Token::Tag {
+        name,
+        raw,
+        is_self_closing,
+        ..
+    } = token
+    {
+        let formatted = format_tag(name, raw, *is_self_closing, 0, config);
+        if formatted.contains('\n') {
+            return false;
+        }
+    }
+
     let children_indices: Vec<usize> = (range.start + 1..range.end - 1).collect();
     let logical_elements = get_logical_elements(&children_indices, tokens);
 
@@ -1022,17 +1067,7 @@ fn is_tag_range_inlinable(
 
     logical_elements.iter().all(|range| {
         if range.len() == 1 {
-            let child = &tokens[range.start];
-            if let Token::Text { raw, .. } = child {
-                !raw.trim().contains('\n')
-            } else if let Token::DjangoVar { .. } = child {
-                true
-            } else if let Token::DjangoBlock { raw, .. } = child {
-                let tag_name = get_django_tag_name(raw).unwrap_or("");
-                !is_block_tag(tag_name, &config.custom_blocks)
-            } else {
-                false
-            }
+            is_strictly_inline(&tokens[range.start], config)
         } else {
             // It's a tag pair.
             if let Token::Tag { name: n, .. } = &tokens[range.start] {
