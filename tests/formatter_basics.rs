@@ -28,6 +28,10 @@ use rstest::rstest;
     "{% block title %}\n    Internal Server Error\n{% endblock %}",
     "{% block title %}Internal Server Error{% endblock %}\n"
 )]
+#[case(
+    "{% for deck in decks %}<option>{{ deck.name }}</option>{% endfor %}",
+    "{% for deck in decks %}<option>{{ deck.name }}</option>{% endfor %}\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
