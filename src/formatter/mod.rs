@@ -8,7 +8,7 @@ fn is_inline_tag(name: &str) -> bool {
     let inline_tags = [
         "a", "abbr", "acronym", "b", "bdo", "big", "cite", "code", "dfn", "em", "i", "img", "kbd",
         "map", "object", "q", "samp", "small", "span", "strong", "sub", "sup", "tt", "var",
-        "title", "option", "script", "style",
+        "title", "option", "script", "style", "time",
     ];
     inline_tags.contains(&name.to_lowercase().as_str())
 }
@@ -384,6 +384,7 @@ pub fn format(config: &Config, source: &str) -> String {
 
                                         if projected_len <= config.max_line_length
                                             || logical_elements.is_empty()
+                                            || is_verbatim
                                         {
                                             output.push_str(collapsed_content);
                                             output.push_str(&format!("</{}>", name));
@@ -471,19 +472,15 @@ pub fn format(config: &Config, source: &str) -> String {
                     }
 
                     if !did_collapse {
+                        let mut should_newline = false;
                         if !is_verbatim {
-                            let mut should_newline = true;
+                            should_newline = true;
                             if is_inline_tag(name) && i + 1 < tokens.len() {
                                 let next_token = &tokens[i + 1];
                                 if next_token.line() == token.ends_on_line()
                                     && is_inline_ish(next_token, config)
                                 {
                                     should_newline = false;
-                                }
-                                if let Token::Text { raw: r, .. } = next_token {
-                                    if r.starts_with('\n') || r.starts_with("\r\n") {
-                                        should_newline = false;
-                                    }
                                 }
                             }
                             if should_newline {
@@ -498,9 +495,19 @@ pub fn format(config: &Config, source: &str) -> String {
                         }
 
                         let mut incremented = false;
+                        let mut will_start_newline = should_newline;
+                        if !will_start_newline && i + 1 < tokens.len() {
+                            if let Token::Text { raw: r, .. } = &tokens[i + 1] {
+                                if r.starts_with('\n') || r.starts_with("\r\n") {
+                                    will_start_newline = true;
+                                }
+                            }
+                        }
+
                         if !is_self_closing
                             && should_indent_children(name)
                             && (!is_inline_tag(name) || started_on_newline)
+                            && will_start_newline
                         {
                             indent_level += 1;
                             incremented = true;
@@ -529,12 +536,20 @@ pub fn format(config: &Config, source: &str) -> String {
                                 output.push_str(&" ".repeat(indent_level * config.indent));
                                 output.push_str(line.trim_start());
                             } else if idx == 0 {
-                                // Continuing inline. We want to preserve original leading spaces
-                                let leading_spaces = raw.chars().take_while(|&c| c == ' ').count();
-                                if leading_spaces > 0 {
-                                    output.push_str(&" ".repeat(leading_spaces));
+                                if raw.starts_with('\n') || raw.starts_with("\r\n") {
+                                    trim_trailing_whitespace(&mut output);
+                                    output.push('\n');
+                                    output.push_str(&" ".repeat(indent_level * config.indent));
+                                    output.push_str(line.trim_start());
+                                } else {
+                                    // Continuing inline. We want to preserve original leading spaces
+                                    let leading_spaces =
+                                        raw.chars().take_while(|&c| c == ' ').count();
+                                    if leading_spaces > 0 {
+                                        output.push_str(&" ".repeat(leading_spaces));
+                                    }
+                                    output.push_str(line);
                                 }
-                                output.push_str(line);
                             } else {
                                 output.push_str(line.trim_start());
                             }
