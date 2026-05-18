@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::formatter::tokenizer::{Token, Tokenizer};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct LintError {
@@ -12,15 +13,39 @@ pub struct LintError {
     pub message: String,
 }
 
+static ALWAYS_IGNORED_RE: OnceLock<Regex> = OnceLock::new();
+static OFF_PATTERNS: OnceLock<Vec<(Regex, Regex)>> = OnceLock::new();
+static HTML_RE: OnceLock<Regex> = OnceLock::new();
+static EXTRA_BLANK_LINES_RE: OnceLock<Regex> = OnceLock::new();
+static ATTR_START_RE: OnceLock<Regex> = OnceLock::new();
+static LOOKAHEAD_ITEM_RE: OnceLock<Regex> = OnceLock::new();
+static SINGLE_QUOTE_ATTR_RE: OnceLock<Regex> = OnceLock::new();
+static UNQUOTED_ATTR_RE: OnceLock<Regex> = OnceLock::new();
+static SPACE_AROUND_EQ_RE: OnceLock<Regex> = OnceLock::new();
+static QUOTE_RE: OnceLock<Regex> = OnceLock::new();
+static JS_LINK_RE: OnceLock<Regex> = OnceLock::new();
+static INLINE_STYLE_RE: OnceLock<Regex> = OnceLock::new();
+static HTTP_LINK_RE: OnceLock<Regex> = OnceLock::new();
+static SCRIPT_STYLE_TYPE_RE: OnceLock<Regex> = OnceLock::new();
+static EMPTY_ID_CLASS_RE: OnceLock<Regex> = OnceLock::new();
+static FORM_ACTION_WS_RE: OnceLock<Regex> = OnceLock::new();
+static ATTR_NAME_RE: OnceLock<Regex> = OnceLock::new();
+static METHOD_RE: OnceLock<Regex> = OnceLock::new();
+static ENTITY_RE: OnceLock<Regex> = OnceLock::new();
+static SPACELESS_TAGS_RE: OnceLock<Regex> = OnceLock::new();
+static MALFORMED_TAG_RE: OnceLock<Regex> = OnceLock::new();
+
 pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let mut errors = Vec::new();
     let tokens: Vec<Token> = Tokenizer::new(source).collect();
 
     let mut open_tags: Vec<(String, usize, usize, usize)> = Vec::new();
-    let single_quote_attr_re = Regex::new(
-        r#"(?i)\b(?:class|id|src|width|height|alt|style|lang|title|srcset|media)='[^']*'"#,
-    )
-    .unwrap();
+    let single_quote_attr_re = SINGLE_QUOTE_ATTR_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)\b(?:class|id|src|width|height|alt|style|lang|title|srcset|media)='[^']*'"#,
+        )
+        .unwrap()
+    });
 
     struct IgnoredRange {
         start: usize,
@@ -30,10 +55,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     let mut ignored_ranges: Vec<IgnoredRange> = Vec::new();
 
-    let always_ignored_re = Regex::new(
-        r#"(?is)<script.*?</script>|<style.*?</style>|<pre.*?</pre>|<textarea.*?</textarea>|<!--.*?-->"#,
-    )
-    .unwrap();
+    let always_ignored_re = ALWAYS_IGNORED_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?is)<script.*?</script>|<style.*?</style>|<pre.*?</pre>|<textarea.*?</textarea>|<!--.*?-->"#,
+        )
+        .unwrap()
+    });
     for m in always_ignored_re.find_iter(source) {
         ignored_ranges.push(IgnoredRange {
             start: m.start(),
@@ -42,25 +69,27 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         });
     }
 
-    let off_patterns = [
-        (
-            r#"(?is)<!--\s*djlint:off(.*?)\s*-->"#,
-            r#"(?is)<!--\s*djlint:on\s*-->"#,
-        ),
-        (
-            r#"(?is)\{#\s*djlint:off(.*?)\s*#\}"#,
-            r#"(?is)\{#\s*djlint:on\s*#\}"#,
-        ),
-        (
-            r#"(?is)\{\{!--\s*djlint:off(.*?)\s*--\}\}"#,
-            r#"(?is)\{\{!--\s*djlint:on\s*--\}\}"#,
-        ),
-    ];
+    let off_patterns = OFF_PATTERNS.get_or_init(|| {
+        [
+            (
+                r#"(?is)<!--\s*djlint:off(.*?)\s*-->"#,
+                r#"(?is)<!--\s*djlint:on\s*-->"#,
+            ),
+            (
+                r#"(?is)\{#\s*djlint:off(.*?)\s*#\}"#,
+                r#"(?is)\{#\s*djlint:on\s*#\}"#,
+            ),
+            (
+                r#"(?is)\{\{!--\s*djlint:off(.*?)\s*--\}\}"#,
+                r#"(?is)\{\{!--\s*djlint:on\s*--\}\}"#,
+            ),
+        ]
+        .iter()
+        .map(|(off, on)| (Regex::new(off).unwrap(), Regex::new(on).unwrap()))
+        .collect()
+    });
 
-    for (off_pat, on_pat) in off_patterns {
-        let off_re = Regex::new(off_pat).unwrap();
-        let on_re = Regex::new(on_pat).unwrap();
-
+    for (off_re, on_re) in off_patterns {
         for off_match in off_re.find_iter(source) {
             let caps = off_re.captures(off_match.as_str()).unwrap();
             let rules_str = caps.get(1).unwrap().as_str();
@@ -114,7 +143,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     // Parity Hack: djlint regex for H030/H031 matches from the VERY FIRST <html> tag.
     // If that tag is inside a comment, the whole match is ignored.
     let mut html_is_ignored = false;
-    if let Some(m) = Regex::new(r#"(?i)<html"#).unwrap().find(source) {
+    let html_re = HTML_RE.get_or_init(|| Regex::new(r#"(?i)<html"#).unwrap());
+    if let Some(m) = html_re.find(source) {
         if is_ignored(m.start(), m.len(), None) {
             html_is_ignored = true;
         }
@@ -123,8 +153,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let masked_source = mask_template_tags(source);
 
     // Batch 3 Regex
-    let extra_blank_lines_pattern = r#"[^\n]{0,10}\n{3,}"#.to_string();
-    let extra_blank_lines_re = Regex::new(&extra_blank_lines_pattern).unwrap();
+    let extra_blank_lines_re =
+        EXTRA_BLANK_LINES_RE.get_or_init(|| Regex::new(r#"[^\n]{0,10}\n{3,}"#).unwrap());
 
     // Run whole-source regexes (like extra blank lines)
     for cap in extra_blank_lines_re.captures_iter(&masked_source) {
@@ -148,23 +178,33 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     // We simulate djlint's broken regex behavior which can jump across tags
     // due to nested quotes in template tags.
     // djlint's H037 regex starts with <\w and uses lookahead.
-    let attr_start_re = Regex::new(r#"(?i)\s([a-z-:][a-z-]*?)="#).unwrap();
-    let lookahead_item_re = Regex::new(
-        r#"(?is)^(?:"[^"]*"|'[^']*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|#[\s\S]*?#|[^'">{}])"#,
-    )
-    .unwrap();
+    let attr_start_re =
+        ATTR_START_RE.get_or_init(|| Regex::new(r#"(?i)\s([a-z-:][a-z-]*?)="#).unwrap());
+    let lookahead_item_re = LOOKAHEAD_ITEM_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?is)^(?:"[^"]*"|'[^']*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|#[\s\S]*?#|[^'">{}])"#,
+        )
+        .unwrap()
+    });
 
     // Batch 1 Rules Regex
-    let unquoted_attr_re = Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap();
-    let space_around_eq_re =
-        Regex::new(r#"(?i)(?:\b|[a-z0-9:@\.-])[a-z0-9:@\.-]*\s+=|=\s+["'{a-z0-9]"#).unwrap();
-    let quote_re = Regex::new(r#""[^"]*"|'[^']*'"#).unwrap();
-    let js_link_re = Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap();
-    let inline_style_re = Regex::new(r#"(?i)\bstyle=["']"#).unwrap();
-    let http_link_re = Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap();
-    let script_style_type_re =
-        Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap();
-    let empty_id_class_re = Regex::new(r#"(?i)\b(?:id|class)=['"]['"]"#).unwrap();
+    let unquoted_attr_re = UNQUOTED_ATTR_RE.get_or_init(|| {
+        Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap()
+    });
+    let space_around_eq_re = SPACE_AROUND_EQ_RE.get_or_init(|| {
+        Regex::new(r#"(?i)(?:\b|[a-z0-9:@\.-])[a-z0-9:@\.-]*\s+=|=\s+["'{a-z0-9]"#).unwrap()
+    });
+    let quote_re = QUOTE_RE.get_or_init(|| Regex::new(r#""[^"]*"|'[^']*'"#).unwrap());
+    let js_link_re = JS_LINK_RE
+        .get_or_init(|| Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap());
+    let inline_style_re =
+        INLINE_STYLE_RE.get_or_init(|| Regex::new(r#"(?i)\bstyle=["']"#).unwrap());
+    let http_link_re = HTTP_LINK_RE
+        .get_or_init(|| Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap());
+    let script_style_type_re = SCRIPT_STYLE_TYPE_RE
+        .get_or_init(|| Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap());
+    let empty_id_class_re =
+        EMPTY_ID_CLASS_RE.get_or_init(|| Regex::new(r#"(?i)\b(?:id|class)=['"]['"]"#).unwrap());
 
     // Batch 2 State
     let mut has_doctype = false;
@@ -172,15 +212,19 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     let mut has_meta_description = false;
     let mut has_meta_keywords = false;
     let mut html_tag_pos: Option<(usize, usize, usize, String)> = None;
-    let form_action_ws_re =
-        Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap();
-    let attr_name_re = Regex::new(r#"(?i)\s([a-zA-Z0-9:-]+)="#).unwrap();
-    let method_re = Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap();
-    let entity_re = Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap();
+    let form_action_ws_re = FORM_ACTION_WS_RE
+        .get_or_init(|| Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap());
+    let attr_name_re =
+        ATTR_NAME_RE.get_or_init(|| Regex::new(r#"(?i)\s([a-zA-Z0-9:-]+)="#).unwrap());
+    let method_re =
+        METHOD_RE.get_or_init(|| Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap());
+    let entity_re = ENTITY_RE
+        .get_or_init(|| Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap());
 
     // Batch 3 Regex
-    let spaceless_tags_re = Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap();
-    let malformed_tag_re = Regex::new(r#"\{%[^}]*?\}%"#).unwrap();
+    let spaceless_tags_re = SPACELESS_TAGS_RE
+        .get_or_init(|| Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap());
+    let malformed_tag_re = MALFORMED_TAG_RE.get_or_init(|| Regex::new(r#"\{%[^}]*?\}%"#).unwrap());
 
     let is_in_html_tag = |pos: usize| -> Option<usize> {
         let prefix = &source[..pos];
@@ -457,7 +501,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
 
                         // Rule H017: Void tags self closing (excluding meta for H035)
-                        if is_void_element(&name_lower)
+                        if crate::is_void_element(&name_lower)
                             && name_lower != "meta"
                             && !raw.ends_with("/>")
                             && !is_ignored(token_offset, token_len, Some("H017"))
@@ -473,7 +517,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule H020: Empty tag pair
                         if !is_self_closing
-                            && !is_void_element(&name_lower)
+                            && !crate::is_void_element(&name_lower)
                             && !matches!(name_lower.as_str(), "td" | "li" | "th" | "dt" | "dd")
                             && !raw.contains(' ')
                             && !is_ignored(token_offset, token_len, Some("H020"))
@@ -825,7 +869,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
                     }
 
-                    if !is_self_closing && !is_void_element(&name_lower) {
+                    if !is_self_closing && !crate::is_void_element(&name_lower) {
                         open_tags.push((name_lower, *line, *column, *offset));
                     }
                 }
@@ -1043,9 +1087,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         .collect()
 }
 
+static DJANGO_BLOCK_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_VAR_RE: OnceLock<Regex> = OnceLock::new();
+
 fn mask_template_tags(raw: &str) -> String {
-    let django_block_re = Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap();
-    let django_var_re = Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap();
+    let django_block_re = DJANGO_BLOCK_RE.get_or_init(|| Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap());
+    let django_var_re = DJANGO_VAR_RE.get_or_init(|| Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap());
 
     let mut masked = raw.to_string();
 
@@ -1063,24 +1110,4 @@ fn mask_template_tags(raw: &str) -> String {
     }
 
     masked
-}
-
-fn is_void_element(name: &str) -> bool {
-    matches!(
-        name,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
-    )
 }

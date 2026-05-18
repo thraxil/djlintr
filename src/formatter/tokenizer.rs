@@ -168,7 +168,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             let name = caps.get(1).unwrap().as_str();
             let raw = m.as_str();
             let is_closing = raw.starts_with("</");
-            let is_self_closing = raw.ends_with("/>") || is_void_element(name);
+            let is_self_closing = raw.ends_with("/>") || crate::is_void_element(name);
 
             self.update_pos(m.end());
             return Some(Token::Tag {
@@ -206,26 +206,6 @@ impl<'a> Iterator for Tokenizer<'a> {
             offset: current_offset,
         })
     }
-}
-
-fn is_void_element(name: &str) -> bool {
-    matches!(
-        name.to_lowercase().as_str(),
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
-    )
 }
 
 impl<'a> Token<'a> {
