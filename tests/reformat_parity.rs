@@ -15,6 +15,18 @@ use rstest::rstest;
     "<div {% if a %}attr=\"v\"></div>\n"
 )]
 #[case("{{ var1 }} {{ var2 }}", "{{ var1 }} {{ var2 }}\n")]
+#[case(
+    "<span>\n    <span>\n        foo\n    </span>\n</span>",
+    "<span>\n    <span>foo</span>\n</span>\n"
+)]
+#[case(
+    "{% block foo %}<span>\nfoo\n</span>{% endblock %}",
+    "{% block foo %}<span>foo</span>{% endblock %}\n"
+)]
+#[case(
+    "{% block foo %}<span>foo{% endblock %}",
+    "{% block foo %}\n    <span>foo\n    {% endblock %}\n"
+)]
 fn test_reformat_parity(#[case] source: &str, #[case] expected: &str) {
     let mut config = Config::default();
     config.profile = "django".to_string();

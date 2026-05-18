@@ -287,6 +287,7 @@ pub fn format(config: &Config, source: &str) -> String {
                         at_start_of_line = true;
                     }
 
+                    let started_on_newline = at_start_of_line;
                     if at_start_of_line {
                         output.push_str(&" ".repeat(indent_level * config.indent));
                     }
@@ -331,11 +332,26 @@ pub fn format(config: &Config, source: &str) -> String {
                                     )
                                 }
                             });
+
+                            let has_newline_text = logical_elements.iter().any(|range| {
+                                if range.len() == 1 {
+                                    if let Token::Text { raw, .. } = &tokens[range.start] {
+                                        raw.contains('\n')
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+
                             if all_inline_ish {
                                 let can_collapse = if is_structural {
                                     false
                                 } else if is_block_parent {
                                     !has_any_tag
+                                } else if has_any_tag {
+                                    !has_newline_text
                                 } else {
                                     true
                                 };
@@ -403,6 +419,7 @@ pub fn format(config: &Config, source: &str) -> String {
                                     && !is_structural
                                     && !logical_elements.is_empty()
                                     && !is_block_parent
+                                    && (!has_any_tag || !has_newline_text)
                                 {
                                     let child_indent = if is_inline_tag(name) {
                                         indent_level
@@ -481,7 +498,9 @@ pub fn format(config: &Config, source: &str) -> String {
                         }
 
                         let mut incremented = false;
-                        if !is_self_closing && should_indent_children(name) && !is_inline_tag(name)
+                        if !is_self_closing
+                            && should_indent_children(name)
+                            && (!is_inline_tag(name) || started_on_newline)
                         {
                             indent_level += 1;
                             incremented = true;
@@ -1133,9 +1152,6 @@ fn get_logical_elements(children: &[usize], tokens: &[Token]) -> Vec<std::ops::R
     while i < children.len() {
         let idx = children[i];
         match &tokens[idx] {
-            Token::Text { raw, .. } if raw.trim().is_empty() && raw.contains('\n') => {
-                i += 1;
-            }
             Token::Tag {
                 name,
                 is_closing: false,
@@ -1191,6 +1207,21 @@ fn is_tag_range_inlinable(
         ..
     } = token
     {
+        // Check if it's closed
+        let last_token = &tokens[range.end - 1];
+        if let Token::Tag {
+            name: n,
+            is_closing: true,
+            ..
+        } = last_token
+        {
+            if n.to_lowercase() != name.to_lowercase() {
+                return false;
+            }
+        } else if !is_self_closing {
+            return false;
+        }
+
         let formatted = format_tag(name, raw, *is_self_closing, 0, config);
         if formatted.contains('\n') {
             return false;
