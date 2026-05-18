@@ -469,9 +469,9 @@ pub fn format(config: &Config, source: &str) -> String {
                                 output.push_str(line.trim_start());
                             } else if idx == 0 {
                                 // Continuing inline. We want to preserve original leading spaces
-                                // but only if they weren't trimmed away by lines()
-                                if raw.starts_with(" ") && !line.starts_with(" ") {
-                                    output.push(' ');
+                                let leading_spaces = raw.chars().take_while(|&c| c == ' ').count();
+                                if leading_spaces > 0 {
+                                    output.push_str(&" ".repeat(leading_spaces));
                                 }
                                 output.push_str(line);
                             } else {
@@ -500,8 +500,10 @@ pub fn format(config: &Config, source: &str) -> String {
                                     at_start_of_line = true;
                                 } else {
                                     // Preserve original trailing space if any
-                                    if raw.ends_with(" ") && !output.ends_with(" ") {
-                                        output.push(' ');
+                                    let trailing_spaces =
+                                        raw.chars().rev().take_while(|&c| c == ' ').count();
+                                    if trailing_spaces > 0 {
+                                        output.push_str(&" ".repeat(trailing_spaces));
                                     }
                                     at_start_of_line = false;
                                 }
@@ -854,13 +856,9 @@ fn format_tag(
         final_content.push_str(filler);
     }
 
-    let attrs_total_len = if attrs.is_empty() {
-        0
-    } else {
-        attrs.iter().map(|a| a.len()).sum::<usize>() + attrs.len() - 1
-    };
+    let attrs_total_len = final_content.trim_start().len();
 
-    let total_line_len = (indent_level * config.indent) + name.len() + 2 + attrs_total_len;
+    let total_line_len = (indent_level * config.indent) + name.len() + 1 + final_content.len() + 1;
 
     if (attrs_total_len <= config.max_attribute_length && total_line_len <= config.max_line_length)
         || !should_wrap_attributes(name)
