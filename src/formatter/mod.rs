@@ -770,7 +770,7 @@ fn format_tag(
     config: &Config,
 ) -> String {
     let attr_re = Regex::new(
-        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}(?:\s*\{%[\s\S]*?%\})*)"#,
+        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#,
     )
     .unwrap();
 
@@ -791,17 +791,64 @@ fn format_tag(
         .map(|m| normalize_django(m.as_str()))
         .collect();
 
-    let final_content = attr_re
-        .replace_all(content, |caps: &regex::Captures| {
-            let m = caps.get(0).unwrap().as_str();
-            let style_attr_re = Regex::new(r#"^style\s*="#).unwrap();
-            if style_attr_re.is_match(m) {
-                format_style_attribute(m, "")
-            } else {
-                normalize_django(m)
+    let mut final_content = String::new();
+    let mut last_end = 0;
+    let mut prev_was_django_block = false;
+    let mut django_block_depth: usize = 0;
+
+    let style_attr_re = Regex::new(r#"^style\s*="#).unwrap();
+    for (idx, m) in attr_re.find_iter(content).enumerate() {
+        let filler = &content[last_end..m.start()];
+        let attr = m.as_str();
+        let is_django_block = attr.starts_with("{%") || attr.starts_with("{#");
+        let attr_content = if is_django_block && attr.len() > 4 {
+            attr[2..attr.len() - 2].trim()
+        } else {
+            ""
+        };
+        let is_closing_like = is_django_block
+            && (attr_content.starts_with("end")
+                || attr_content.starts_with("else")
+                || attr_content.starts_with("elif"));
+
+        if prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0) {
+            final_content.push_str(filler.trim());
+        } else {
+            final_content.push_str(filler);
+        }
+
+        let normalized = if style_attr_re.is_match(attr) {
+            format_style_attribute(attr, "")
+        } else {
+            normalize_django(attr)
+        };
+
+        final_content.push_str(&normalized);
+
+        if is_django_block {
+            if attr_content.starts_with("if")
+                || attr_content.starts_with("for")
+                || attr_content.starts_with("with")
+                || attr_content.starts_with("block")
+                || attr_content.starts_with("filter")
+                || attr_content.starts_with("autoescape")
+                || attr_content.starts_with("spaceless")
+            {
+                django_block_depth += 1;
+            } else if attr_content.starts_with("end") {
+                django_block_depth = django_block_depth.saturating_sub(1);
             }
-        })
-        .to_string();
+        }
+
+        prev_was_django_block = is_django_block;
+        last_end = m.end();
+    }
+    let filler = &content[last_end..];
+    if prev_was_django_block {
+        final_content.push_str(filler.trim());
+    } else {
+        final_content.push_str(filler);
+    }
 
     let attrs_total_len = if attrs.is_empty() {
         0
