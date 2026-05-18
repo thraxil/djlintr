@@ -357,12 +357,17 @@ impl<'a> Formatter<'a> {
 
                         let all_inline_ish = logical_elements.iter().all(|range| {
                             if range.len() == 1 {
-                                is_strictly_inline(&self.tokens[range.start], self.config)
+                                is_strictly_inline(&self.tokens[range.start], self.config, false)
                             } else {
                                 // It's a tag pair. Inline if it's an inline tag and its content is inlinable.
                                 if let Token::Tag { name: n, .. } = &self.tokens[range.start] {
                                     is_inline_tag(n)
-                                        && is_tag_range_inlinable(range, &self.tokens, self.config)
+                                        && is_tag_range_inlinable(
+                                            range,
+                                            &self.tokens,
+                                            self.config,
+                                            false,
+                                        )
                                 } else {
                                     false
                                 }
@@ -610,8 +615,10 @@ impl<'a> Formatter<'a> {
 
                     if !is_self_closing
                         && should_indent_children(name)
-                        && (!is_inline_tag(name) || started_on_newline)
-                        && (will_start_newline || has_newline_in_children)
+                        && (!is_inline_tag(name)
+                            || started_on_newline
+                            || will_start_newline
+                            || has_newline_in_children)
                         && !is_verbatim
                     {
                         self.indent_level += 1;
@@ -794,6 +801,13 @@ impl<'a> Formatter<'a> {
 
             // Check if we can inline
             let mut did_collapse = false;
+
+            if !self.at_start_of_line && (is_block || is_reindent) {
+                trim_trailing_whitespace(&mut self.output);
+                self.output.push('\n');
+                self.at_start_of_line = true;
+            }
+
             if !is_closing && is_block {
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
@@ -802,7 +816,7 @@ impl<'a> Formatter<'a> {
 
                     let all_inline_ish = logical_elements.iter().all(|range| {
                         if range.len() == 1 {
-                            is_strictly_inline(&self.tokens[range.start], self.config)
+                            is_strictly_inline(&self.tokens[range.start], self.config, true)
                         } else {
                             // It's a tag pair.
                             let first_token = &self.tokens[range.start];
@@ -821,6 +835,7 @@ impl<'a> Formatter<'a> {
                                                 range,
                                                 &self.tokens,
                                                 self.config,
+                                                true,
                                             )
                                     } else {
                                         is_inline_tag(n)
@@ -828,11 +843,12 @@ impl<'a> Formatter<'a> {
                                                 range,
                                                 &self.tokens,
                                                 self.config,
+                                                true,
                                             )
                                     }
                                 }
                                 Token::DjangoBlock { .. } => {
-                                    is_tag_range_inlinable(range, &self.tokens, self.config)
+                                    is_tag_range_inlinable(range, &self.tokens, self.config, true)
                                 }
                                 _ => false,
                             }
@@ -871,7 +887,7 @@ impl<'a> Formatter<'a> {
 
                         let all_strictly_inline = logical_elements.iter().all(|range| {
                             if range.len() == 1 {
-                                is_strictly_inline(&self.tokens[range.start], self.config)
+                                is_strictly_inline(&self.tokens[range.start], self.config, true)
                             } else {
                                 let first_token = &self.tokens[range.start];
                                 if let Token::Tag { name: n, .. } = first_token {
@@ -903,12 +919,6 @@ impl<'a> Formatter<'a> {
             }
 
             if !did_collapse {
-                if !self.at_start_of_line && (is_block || is_reindent) {
-                    trim_trailing_whitespace(&mut self.output);
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
-                }
-
                 if self.at_start_of_line {
                     self.output
                         .push_str(&" ".repeat(self.indent_level * self.config.indent));
@@ -1203,10 +1213,13 @@ fn is_reindent_tag(name: &str) -> bool {
     matches!(name, "else" | "elif" | "empty")
 }
 
-fn is_strictly_inline(token: &Token, config: &Config) -> bool {
+fn is_strictly_inline(token: &Token, config: &Config, is_parent_django: bool) -> bool {
     match token {
         Token::DjangoVar { .. } => true,
         Token::DjangoBlock { raw, .. } => {
+            if is_parent_django {
+                return false;
+            }
             let tag_name = get_django_tag_name(raw).unwrap_or("");
             if is_reindent_tag(tag_name) {
                 return false;
@@ -1220,7 +1233,13 @@ fn is_strictly_inline(token: &Token, config: &Config) -> bool {
             !is_block_tag(actual_tag_name, &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.trim().contains('\n'),
-        Token::Tag { name, .. } => is_inline_tag(name),
+        Token::Tag { name, raw, .. } => {
+            if is_parent_django {
+                is_inline_tag(name) && !raw.contains("{%")
+            } else {
+                is_inline_tag(name) && !raw.contains("{%") && !raw.contains("{{")
+            }
+        }
         Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
         Token::Doctype { .. } => false,
     }
@@ -1422,6 +1441,7 @@ fn is_tag_range_inlinable(
     range: &std::ops::Range<usize>,
     tokens: &[Token],
     config: &Config,
+    is_parent_django: bool,
 ) -> bool {
     let token = &tokens[range.start];
     match token {
@@ -1431,6 +1451,9 @@ fn is_tag_range_inlinable(
             is_self_closing,
             ..
         } => {
+            if raw.contains("{%") || (!is_parent_django && raw.contains("{{")) {
+                return false;
+            }
             // Check if it's closed
             let last_token = &tokens[range.end - 1];
             if let Token::Tag {
@@ -1452,6 +1475,9 @@ fn is_tag_range_inlinable(
             }
         }
         Token::DjangoBlock { raw, .. } => {
+            if is_parent_django {
+                return false;
+            }
             let tag_name = get_django_tag_name(raw).unwrap_or("");
             let is_block = is_block_tag(tag_name, &config.custom_blocks);
             if is_block {
@@ -1470,15 +1496,18 @@ fn is_tag_range_inlinable(
 
     logical_elements.iter().all(|range| {
         if range.len() == 1 {
-            is_strictly_inline(&tokens[range.start], config)
+            is_strictly_inline(&tokens[range.start], config, is_parent_django)
         } else {
             // It's a tag pair.
             let first_token = &tokens[range.start];
             match first_token {
                 Token::Tag { name: n, .. } => {
-                    is_inline_tag(n) && is_tag_range_inlinable(range, tokens, config)
+                    is_inline_tag(n)
+                        && is_tag_range_inlinable(range, tokens, config, is_parent_django)
                 }
-                Token::DjangoBlock { .. } => is_tag_range_inlinable(range, tokens, config),
+                Token::DjangoBlock { .. } => {
+                    is_tag_range_inlinable(range, tokens, config, is_parent_django)
+                }
                 _ => false,
             }
         }
