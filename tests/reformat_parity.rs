@@ -14,6 +14,7 @@ use rstest::rstest;
     "<div {% if a %} attr=\"v\"></div>",
     "<div {% if a %}attr=\"v\"></div>\n"
 )]
+#[case("{{ var1 }} {{ var2 }}", "{{ var1 }} {{ var2 }}\n")]
 fn test_reformat_parity(#[case] source: &str, #[case] expected: &str) {
     let mut config = Config::default();
     config.profile = "django".to_string();

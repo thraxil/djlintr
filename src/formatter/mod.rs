@@ -510,12 +510,16 @@ pub fn format(config: &Config, source: &str) -> String {
                                 at_start_of_line = true;
                             }
                         }
-                    } else if raw.contains('\n') {
-                        if !at_start_of_line {
-                            trim_trailing_whitespace(&mut output);
-                            output.push('\n');
+                    } else if !raw.is_empty() {
+                        if raw.contains('\n') {
+                            if !at_start_of_line {
+                                trim_trailing_whitespace(&mut output);
+                                output.push('\n');
+                            }
+                            at_start_of_line = true;
+                        } else if !at_start_of_line {
+                            output.push_str(raw);
                         }
-                        at_start_of_line = true;
                     }
                 }
             }
@@ -995,11 +999,7 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
             let actual_tag_name = if is_closing { &tag_name[3..] } else { tag_name };
             !is_block_tag(actual_tag_name, &config.custom_blocks)
         }
-        Token::Text { raw, .. } => raw
-            .split('\n')
-            .next()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false),
+        Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
         Token::Tag { name, .. } => is_inline_tag(name),
         Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
         Token::Doctype { .. } => false,
