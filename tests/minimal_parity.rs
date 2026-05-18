@@ -45,9 +45,7 @@ fn test_block_one_lining() {
     let expected = "<!-- B: Block one-lining -->
 {% block subhead %}
     Gear
-    {% if user.is_authenticated %}
-        (<a href=\"/link/\">+</a>)
-    {% endif %}
+    {% if user.is_authenticated %}(<a href=\"/link/\">+</a>){% endif %}
 {% endblock %}\n";
 
     run_parity_test(source, expected);

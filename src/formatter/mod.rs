@@ -840,18 +840,6 @@ impl<'a> Formatter<'a> {
                     });
 
                     if all_inline_ish {
-                        let mut same_line = self.tokens[j].line() == token.line();
-                        if same_line {
-                            for range in &logical_elements {
-                                if self.tokens[range.start].line() != token.line()
-                                    || self.tokens[range.end - 1].ends_on_line() != token.line()
-                                {
-                                    same_line = false;
-                                    break;
-                                }
-                            }
-                        }
-
                         let non_whitespace_elements: Vec<_> = logical_elements
                             .iter()
                             .filter(|range| {
@@ -867,14 +855,6 @@ impl<'a> Formatter<'a> {
                             })
                             .collect();
 
-                        let has_any_html_tag = non_whitespace_elements.iter().any(|range| {
-                            if range.len() > 1 {
-                                true
-                            } else {
-                                matches!(self.tokens[range.start], Token::Tag { .. })
-                            }
-                        });
-
                         let normalized_start = normalize_django(raw);
                         let normalized_end = normalize_django(self.tokens[j].raw());
                         let content = format_range_inlined_joined(
@@ -889,10 +869,21 @@ impl<'a> Formatter<'a> {
                             + collapsed_content.len()
                             + normalized_end.len();
 
+                        let all_strictly_inline = logical_elements.iter().all(|range| {
+                            if range.len() == 1 {
+                                is_strictly_inline(&self.tokens[range.start], self.config)
+                            } else {
+                                let first_token = &self.tokens[range.start];
+                                if let Token::Tag { name: n, .. } = first_token {
+                                    is_inline_tag(n)
+                                } else {
+                                    false
+                                }
+                            }
+                        });
+
                         if projected_len <= self.config.max_line_length
-                            && (same_line
-                                || !has_any_html_tag
-                                || non_whitespace_elements.len() == 1)
+                            && (all_strictly_inline || non_whitespace_elements.len() <= 1)
                         {
                             if self.at_start_of_line {
                                 self.output
