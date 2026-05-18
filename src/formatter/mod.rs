@@ -8,7 +8,7 @@ fn is_inline_tag(name: &str) -> bool {
     let inline_tags = [
         "a", "abbr", "acronym", "b", "bdo", "big", "cite", "code", "dfn", "em", "i", "img", "kbd",
         "map", "object", "q", "samp", "small", "span", "strong", "sub", "sup", "tt", "var",
-        "title", "option",
+        "title", "option", "script", "style",
     ];
     inline_tags.contains(&name.to_lowercase().as_str())
 }
@@ -173,6 +173,48 @@ pub fn format(config: &Config, source: &str) -> String {
                     if *is_closing && verbatim_tags.last() == Some(&name_lower) {
                         // Closing verbatim tag
                         verbatim_tags.pop();
+
+                        let mut incremented = false;
+                        if let Some((_, inc)) = parent_stack.pop() {
+                            incremented = inc;
+                        }
+                        if incremented {
+                            indent_level = indent_level.saturating_sub(1);
+                        }
+
+                        if !at_start_of_line && !is_inline_tag(name) {
+                            trim_trailing_whitespace(&mut output);
+                            output.push('\n');
+                            at_start_of_line = true;
+                        }
+                        if at_start_of_line {
+                            output.push_str(&" ".repeat(indent_level * config.indent));
+                        }
+                        output.push_str(&format!("</{}>", name));
+
+                        let mut should_newline = true;
+                        if is_inline_tag(name) && i + 1 < tokens.len() {
+                            let next_token = &tokens[i + 1];
+                            if next_token.line() == token.ends_on_line()
+                                && is_inline_ish(next_token, config)
+                            {
+                                should_newline = false;
+                            }
+                            if let Token::Text { raw: r, .. } = next_token {
+                                if r.starts_with('\n') || r.starts_with("\r\n") {
+                                    should_newline = false;
+                                }
+                            }
+                        }
+
+                        if should_newline {
+                            output.push('\n');
+                            at_start_of_line = true;
+                        } else {
+                            at_start_of_line = false;
+                        }
+                        i += 1;
+                        continue;
                     } else {
                         output.push_str(raw);
                         at_start_of_line = raw.ends_with('\n');
