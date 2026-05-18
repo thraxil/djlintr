@@ -1,0 +1,37 @@
+<!-- A: Attribute Wrapping (should not wrap if short enough) -->
+<form action="{% url 'gear:gear_add_link' slug=gear.slug %}" method="post">
+    <table>{{ form.as_table }}</table>
+</form>
+
+<!-- B: Block one-lining (djlint often prefers multi-line if content is complex) -->
+{% block subhead %}
+    Gear
+    {% if user.is_authenticated %}
+        (<a href="{% url 'gear:gear_create' %}">+</a>)
+    {% endif %}
+{% endblock %}
+
+<!-- C: Script tag (should preserve formatting or indent correctly) -->
+<script>
+jQuery(function() {
+    {% if request.user.is_authenticated %}jQuery('#add-manufacturer-form').hide();{% endif %}
+});
+</script>
+
+<!-- D: Empty tags (should preserve multi-line if present) -->
+<header>
+</header>
+
+<!-- E: Indentation of inline tags containing newlines -->
+<span>
+    <a href="#">Link</a>
+</span>
+
+<!-- F: Spacing and text (Email template style) -->
+Greetings {{ user }},
+
+To reset your password, please click the following link:
+{{ protocol }}://{{ domain }}{% url auth_password_reset_confirm uid token %}
+
+Best regards,
+{{ site_name }} Management

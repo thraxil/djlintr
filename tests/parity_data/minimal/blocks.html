@@ -1,0 +1,22 @@
+{% block subhead %}
+    Gear
+    {% if user.is_authenticated %}
+        (<a href="{% url 'gear:gear_create' %}">+</a>)
+    {% endif %}
+{% endblock %}
+
+{% block subhead2 %}
+    <a href="{% url 'gear:gear_tags' %}">Tag</a>: {{ tag }}
+{% endblock %}
+
+<select name="deck">
+    {% for deck in decks %}<option value="{{ deck.name }}">{{ deck.name }}</option>{% endfor %}
+    <option value="">New Deck</option>
+</select>
+
+{% if object.description %}
+    <dt>Description</dt>
+    <dd>
+        {{ object.description_html|safe }}
+    </dd>
+{% endif %}

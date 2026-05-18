@@ -1,0 +1,16 @@
+<title>gearspotting:
+    {% block title %}{% endblock %}
+</title>
+
+<header>
+</header>
+
+{% if card %}
+<div class="row" id="card">
+    <div class="col-md-12">
+        {% if card.card.front.content %}
+            <span style="margin: 10px; font-size: {{ card.card.front.size }}px">{{ card.card.front.content }}</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

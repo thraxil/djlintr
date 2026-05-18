@@ -1,0 +1,15 @@
+<form action="{% url 'gear:gear_add_link' slug=gear.slug %}" method="post">
+    <table>
+        {{ form.as_table }}
+    </table>
+</form>
+
+<table class="table table-striped table-bordered table-condensed table-hover">
+    <thead>
+        <tr>
+            <th>Front</th>
+        </tr>
+    </thead>
+</table>
+
+<link rel="stylesheet" media="handheld" href="{% static "css/handheld.css?v=2" %}">
