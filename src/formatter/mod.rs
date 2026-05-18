@@ -146,6 +146,10 @@ pub fn format(config: &Config, source: &str) -> String {
                 } else {
                     let is_control = r.contains("djlint:off") || r.contains("djlint:on");
                     if !is_control {
+                        if !at_start_of_line {
+                            trim_trailing_whitespace(&mut output);
+                            output.push('\n');
+                        }
                         output.push_str(&" ".repeat(indent_level * config.indent));
                         output.push_str(r.trim());
                         output.push('\n');
@@ -742,21 +746,6 @@ pub fn format(config: &Config, source: &str) -> String {
                         if let Some(j) = closing_idx {
                             let logical_elements = get_logical_elements(&children, &tokens);
 
-                            let non_whitespace_elements: Vec<_> = logical_elements
-                                .iter()
-                                .filter(|range| {
-                                    if range.len() == 1 {
-                                        if let Token::Text { raw, .. } = &tokens[range.start] {
-                                            !raw.trim().is_empty()
-                                        } else {
-                                            true
-                                        }
-                                    } else {
-                                        true
-                                    }
-                                })
-                                .collect();
-
                             let all_inline_ish = logical_elements.iter().all(|range| {
                                 if range.len() == 1 {
                                     is_strictly_inline(&tokens[range.start], config)
@@ -810,9 +799,7 @@ pub fn format(config: &Config, source: &str) -> String {
                                     + collapsed_content.len()
                                     + normalized_end.len();
 
-                                if projected_len <= config.max_line_length
-                                    && (non_whitespace_elements.len() <= 1)
-                                {
+                                if projected_len <= config.max_line_length {
                                     if at_start_of_line {
                                         output.push_str(&" ".repeat(indent_level * config.indent));
                                     }
