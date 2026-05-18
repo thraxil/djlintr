@@ -326,8 +326,8 @@ impl<'a> Formatter<'a> {
             } else {
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
-                let is_potentially_verbatim = matches!(name_lower.as_str(), "style" | "script")
-                    && !is_self_closing;
+                let is_potentially_verbatim =
+                    matches!(name_lower.as_str(), "style" | "script") && !is_self_closing;
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     trim_trailing_whitespace(&mut self.output);
@@ -1007,6 +1007,8 @@ fn trim_trailing_whitespace(s: &mut String) {
 static ATTR_RE: OnceLock<Regex> = OnceLock::new();
 static STYLE_ATTR_RE: OnceLock<Regex> = OnceLock::new();
 
+static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
+
 fn format_tag(
     name: &str,
     raw: &str,
@@ -1020,6 +1022,7 @@ fn format_tag(
         )
         .unwrap()
     });
+    let whitespace_re = WHITESPACE_RE.get_or_init(|| Regex::new(r#"\s+"#).unwrap());
 
     let start_pos = if raw.starts_with("</") {
         2 + name.len()
@@ -1097,9 +1100,11 @@ fn format_tag(
         final_content.push_str(filler);
     }
 
-    let attrs_total_len = final_content.trim_start().len();
+    let normalized_final_content = whitespace_re.replace_all(&final_content, " ");
+    let attrs_total_len = normalized_final_content.trim_start().len();
 
-    let total_line_len = (indent_level * config.indent) + name.len() + 1 + final_content.len() + 1;
+    let total_line_len =
+        (indent_level * config.indent) + name.len() + 1 + normalized_final_content.len() + 1;
 
     if (attrs_total_len <= config.max_attribute_length && total_line_len <= config.max_line_length)
         || !should_wrap_attributes(name)
@@ -1110,7 +1115,7 @@ fn format_tag(
             format!("<{}", name)
         };
 
-        formatted.push_str(final_content.trim_end());
+        formatted.push_str(normalized_final_content.trim_end());
 
         if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
             formatted.push_str(" />");
