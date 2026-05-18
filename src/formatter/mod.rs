@@ -527,6 +527,7 @@ pub fn format(config: &Config, source: &str) -> String {
                                     && !token.raw().ends_with('\n')
                                     && !token.raw().ends_with("\r\n")
                                     && is_inline_ish(next_token, config)
+                                    && (is_inline_tag(name) || !is_html_block_tag(name))
                                 {
                                     should_newline = false;
                                 }
@@ -553,10 +554,13 @@ pub fn format(config: &Config, source: &str) -> String {
                             }
                         }
 
+                        let has_newline_in_children =
+                            children.iter().any(|&idx| tokens[idx].raw().contains('\n'));
+
                         if !is_self_closing
                             && should_indent_children(name)
                             && (!is_inline_tag(name) || started_on_newline)
-                            && will_start_newline
+                            && (will_start_newline || has_newline_in_children)
                             && !is_verbatim
                         {
                             indent_level += 1;
