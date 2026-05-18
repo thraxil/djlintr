@@ -27,10 +27,7 @@ use rstest::rstest;
     "{% block foo %}<span>foo{% endblock %}",
     "{% block foo %}\n    <span>foo\n    {% endblock %}\n"
 )]
-#[case(
-    "</span>\n@ <time>",
-    "</span>\n@ <time>\n"
-)]
+#[case("</span>\n@ <time>", "</span>\n@ <time>\n")]
 fn test_reformat_parity(#[case] source: &str, #[case] expected: &str) {
     let mut config = Config::default();
     config.profile = "django".to_string();
