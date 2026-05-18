@@ -241,7 +241,7 @@ impl<'a> Formatter<'a> {
                         self.output.push('\n');
                         self.at_start_of_line = true;
                     }
-                    if self.at_start_of_line && !is_closing_verbatim {
+                    if self.at_start_of_line {
                         self.output
                             .push_str(&" ".repeat(self.indent_level * self.config.indent));
                     }
@@ -326,33 +326,23 @@ impl<'a> Formatter<'a> {
             } else {
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
-                let is_verbatim = matches!(name_lower.as_str(), "style" | "script")
-                    && !is_self_closing
-                    && children
-                        .iter()
-                        .any(|&idx| self.tokens[idx].raw().contains('\n'));
+                let is_potentially_verbatim = matches!(name_lower.as_str(), "style" | "script")
+                    && !is_self_closing;
 
-                if is_verbatim {
-                    self.verbatim_tags.push(name_lower.clone());
-                }
-
-                if !self.at_start_of_line && is_html_block_tag(name) {
+                if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     trim_trailing_whitespace(&mut self.output);
                     self.output.push('\n');
                     self.at_start_of_line = true;
                 }
 
                 let started_on_newline = self.at_start_of_line;
-                if self.at_start_of_line && !is_verbatim {
+                if self.at_start_of_line {
                     self.output
                         .push_str(&" ".repeat(self.indent_level * self.config.indent));
                 }
 
-                let formatted_tag = if is_verbatim {
-                    format_tag(name, raw, *is_self_closing, 0, self.config)
-                } else {
-                    format_tag(name, raw, *is_self_closing, self.indent_level, self.config)
-                };
+                let formatted_tag =
+                    format_tag(name, raw, *is_self_closing, self.indent_level, self.config);
                 self.output.push_str(&formatted_tag);
                 self.at_start_of_line =
                     formatted_tag.ends_with('\n') || formatted_tag.ends_with("\r\n");
@@ -361,7 +351,7 @@ impl<'a> Formatter<'a> {
                 let is_block_parent = is_html_block_tag(name);
                 let is_structural = is_structural_tag(name);
                 let mut did_collapse = false;
-                if !is_self_closing && !is_verbatim {
+                if !is_self_closing {
                     if let Some(j) = closing_idx {
                         let logical_elements = get_logical_elements(&children, &self.tokens);
 
@@ -473,7 +463,8 @@ impl<'a> Formatter<'a> {
                                     let projected_len =
                                         current_line_len + collapsed_content.len() + name.len() + 3;
 
-                                    if (projected_len <= self.config.max_line_length || is_verbatim)
+                                    if (projected_len <= self.config.max_line_length
+                                        || is_potentially_verbatim)
                                         && (logical_elements.is_empty()
                                             && j == self.pos + 1
                                             && self.tokens[j].line() == token.ends_on_line()
@@ -515,6 +506,7 @@ impl<'a> Formatter<'a> {
                                 && !logical_elements.is_empty()
                                 && !is_block_parent
                                 && (!has_any_tag || !has_newline_text)
+                                && !is_potentially_verbatim
                             {
                                 let child_indent = if is_inline_tag(name) {
                                     self.indent_level
@@ -570,6 +562,12 @@ impl<'a> Formatter<'a> {
                 }
 
                 if !did_collapse {
+                    let mut is_verbatim = false;
+                    if is_potentially_verbatim {
+                        is_verbatim = true;
+                        self.verbatim_tags.push(name_lower.clone());
+                    }
+
                     let mut should_newline = false;
                     if !is_verbatim {
                         should_newline = true;
