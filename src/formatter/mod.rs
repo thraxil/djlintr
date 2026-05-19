@@ -776,6 +776,46 @@ impl<'a> Formatter<'a> {
     fn handle_django_block(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
+            let is_script_or_style = self
+                .verbatim_tags
+                .last()
+                .map(|t| t == "script" || t == "style")
+                .unwrap_or(false);
+            if is_script_or_style {
+                let tag_name = get_django_tag_name(raw).unwrap_or("");
+                let is_block = is_block_tag(tag_name, &self.config.custom_blocks);
+                if is_block && !tag_name.starts_with("end") {
+                    let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
+                    if let Some(j) = closing_idx {
+                        let logical_elements = get_logical_elements(&children, &self.tokens);
+                        let all_inline_ish = logical_elements.iter().all(|range| {
+                            if range.len() == 1 {
+                                is_strictly_inline(&self.tokens[range.start], self.config, true)
+                            } else {
+                                false
+                            }
+                        });
+                        if all_inline_ish && !logical_elements.is_empty() {
+                            let content = format_range_inlined_joined(
+                                &logical_elements,
+                                &self.tokens,
+                                0,
+                                self.config,
+                            );
+                            if !content.contains('\n') {
+                                let normalized_start = normalize_django(raw);
+                                let normalized_end = normalize_django(self.tokens[j].raw());
+                                self.output.push_str(&normalized_start);
+                                self.output.push_str(content.trim());
+                                self.output.push_str(&normalized_end);
+                                self.at_start_of_line = false;
+                                self.pos = j;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             self.output.push_str(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
