@@ -105,6 +105,10 @@ struct Formatter<'a> {
     verbatim_tags: Vec<String>,
     at_start_of_line: bool,
     parent_stack: Vec<(usize, bool)>,
+    last_increment_line: Option<usize>,
+    last_decrement_line: Option<usize>,
+    output_line_index: usize,
+    current_line_has_non_whitespace: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -120,6 +124,42 @@ impl<'a> Formatter<'a> {
             verbatim_tags: Vec::new(),
             at_start_of_line: true,
             parent_stack: Vec::new(),
+            last_increment_line: None,
+            last_decrement_line: None,
+            output_line_index: 0,
+            current_line_has_non_whitespace: false,
+        }
+    }
+
+    fn push_newline(&mut self) {
+        self.output.push('\n');
+        self.output_line_index += 1;
+        self.at_start_of_line = true;
+        self.current_line_has_non_whitespace = false;
+    }
+
+    fn push_content(&mut self, s: &str) {
+        if s.contains('\n') || s.contains('\r') {
+            for (idx, line) in s.split('\n').enumerate() {
+                if idx > 0 {
+                    self.output_line_index += 1;
+                    self.current_line_has_non_whitespace = false;
+                    self.at_start_of_line = true;
+                }
+                self.output.push_str(line);
+                if idx < s.split('\n').count() - 1 {
+                    self.output.push('\n');
+                } else if !line.trim().is_empty() {
+                    self.current_line_has_non_whitespace = true;
+                    self.at_start_of_line = false;
+                }
+            }
+        } else {
+            self.output.push_str(s);
+            if !s.trim().is_empty() {
+                self.current_line_has_non_whitespace = true;
+                self.at_start_of_line = false;
+            }
         }
     }
 
@@ -147,13 +187,12 @@ impl<'a> Formatter<'a> {
                 if raw.contains("djlint:on") {
                     self.formatting_enabled = true;
                     trim_trailing_whitespace(&mut self.output);
-                    self.output.push_str(raw.trim());
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_content(raw.trim());
+                    self.push_newline();
                     return;
                 }
             }
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
             return;
         }
@@ -171,12 +210,12 @@ impl<'a> Formatter<'a> {
     fn handle_doctype(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             self.output
                 .push_str(&" ".repeat(self.indent_level * self.config.indent));
-            self.output.push_str("<!DOCTYPE html>\n");
+            self.push_content("<!DOCTYPE html>\n");
             self.at_start_of_line = true;
         }
     }
@@ -184,28 +223,26 @@ impl<'a> Formatter<'a> {
     fn handle_comment(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             let is_control = raw.contains("djlint:off") || raw.contains("djlint:on");
             if !is_control {
                 if !self.at_start_of_line {
                     trim_trailing_whitespace(&mut self.output);
-                    self.output.push('\n');
+                    self.push_newline();
                 }
                 self.output
                     .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                self.output.push_str(raw.trim());
-                self.output.push('\n');
-                self.at_start_of_line = true;
+                self.push_content(raw.trim());
+                self.push_newline();
             } else {
-                self.output.push_str(raw.trim());
+                self.push_content(raw.trim());
                 if raw.contains("djlint:off") {
                     self.formatting_enabled = false;
                     self.at_start_of_line = false;
                 } else {
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_newline();
                 }
             }
         }
@@ -228,24 +265,24 @@ impl<'a> Formatter<'a> {
                     let was_verbatim_name = self.verbatim_tags.pop();
                     let is_closing_verbatim = was_verbatim_name.is_some();
 
-                    let mut incremented = false;
-                    if let Some((_, inc)) = self.parent_stack.pop() {
-                        incremented = inc;
-                    }
-                    if incremented {
+                    self.parent_stack.pop();
+
+                    let already_decremented =
+                        self.last_decrement_line == Some(self.output_line_index);
+                    if !already_decremented {
                         self.indent_level = self.indent_level.saturating_sub(1);
+                        self.last_decrement_line = Some(self.output_line_index);
                     }
 
                     if !self.at_start_of_line && !is_inline_tag(name) && !is_closing_verbatim {
                         trim_trailing_whitespace(&mut self.output);
-                        self.output.push('\n');
-                        self.at_start_of_line = true;
+                        self.push_newline();
                     }
                     if self.at_start_of_line {
                         self.output
                             .push_str(&" ".repeat(self.indent_level * self.config.indent));
                     }
-                    self.output.push_str(&format!("</{}>", name));
+                    self.push_content(&format!("</{}>", name));
 
                     let mut should_newline = true;
                     if (is_inline_tag(name) || is_closing_verbatim)
@@ -267,38 +304,36 @@ impl<'a> Formatter<'a> {
                     }
 
                     if should_newline {
-                        self.output.push('\n');
-                        self.at_start_of_line = true;
+                        self.push_newline();
                     } else {
                         self.at_start_of_line = false;
                     }
                     return;
                 } else {
-                    self.output.push_str(raw);
+                    self.push_content(raw);
                     self.at_start_of_line = raw.ends_with('\n');
                     return;
                 }
             }
 
             if *is_closing {
-                let mut incremented = false;
-                if let Some((_, inc)) = self.parent_stack.pop() {
-                    incremented = inc;
-                }
-                if incremented {
+                self.parent_stack.pop();
+
+                let already_decremented = self.last_decrement_line == Some(self.output_line_index);
+                if !already_decremented {
                     self.indent_level = self.indent_level.saturating_sub(1);
+                    self.last_decrement_line = Some(self.output_line_index);
                 }
 
                 if !self.at_start_of_line && !is_inline_tag(name) {
                     trim_trailing_whitespace(&mut self.output);
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_newline();
                 }
                 if self.at_start_of_line {
                     self.output
                         .push_str(&" ".repeat(self.indent_level * self.config.indent));
                 }
-                self.output.push_str(&format!("</{}>", name));
+                self.push_content(&format!("</{}>", name));
 
                 let mut should_newline = true;
                 if is_inline_tag(name) && self.pos + 1 < self.tokens.len() {
@@ -318,8 +353,7 @@ impl<'a> Formatter<'a> {
                 }
 
                 if should_newline {
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_newline();
                 } else {
                     self.at_start_of_line = false;
                 }
@@ -331,11 +365,11 @@ impl<'a> Formatter<'a> {
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     trim_trailing_whitespace(&mut self.output);
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_newline();
                 }
 
-                let started_on_newline = self.at_start_of_line;
+                let already_incremented_on_this_line = self.current_line_has_non_whitespace;
+
                 if self.at_start_of_line {
                     self.output
                         .push_str(&" ".repeat(self.indent_level * self.config.indent));
@@ -343,7 +377,8 @@ impl<'a> Formatter<'a> {
 
                 let formatted_tag =
                     format_tag(name, raw, *is_self_closing, self.indent_level, self.config);
-                self.output.push_str(&formatted_tag);
+                self.push_content(&formatted_tag);
+
                 self.at_start_of_line =
                     formatted_tag.ends_with('\n') || formatted_tag.ends_with("\r\n");
 
@@ -468,6 +503,13 @@ impl<'a> Formatter<'a> {
                                     let projected_len =
                                         current_line_len + collapsed_content.len() + name.len() + 3;
 
+                                    if true {
+                                        eprintln!(
+                                            "DEBUG: {} tag projected_len: {}, max: {}",
+                                            name, projected_len, self.config.max_line_length
+                                        );
+                                    }
+
                                     if (projected_len <= self.config.max_line_length
                                         || is_potentially_verbatim)
                                         && (logical_elements.is_empty()
@@ -475,8 +517,8 @@ impl<'a> Formatter<'a> {
                                             && self.tokens[j].line() == token.ends_on_line()
                                             || !logical_elements.is_empty())
                                     {
-                                        self.output.push_str(collapsed_content);
-                                        self.output.push_str(&format!("</{}>", name));
+                                        self.push_content(collapsed_content);
+                                        self.push_content(&format!("</{}>", name));
                                         let mut should_newline = true;
                                         if is_inline_tag(name) && j + 1 < self.tokens.len() {
                                             let next_token = &self.tokens[j + 1];
@@ -495,8 +537,7 @@ impl<'a> Formatter<'a> {
                                         }
                                         if should_newline {
                                             trim_trailing_whitespace(&mut self.output);
-                                            self.output.push('\n');
-                                            self.at_start_of_line = true;
+                                            self.push_newline();
                                         } else {
                                             self.at_start_of_line = false;
                                         }
@@ -506,62 +547,63 @@ impl<'a> Formatter<'a> {
                                 }
                             }
 
-                            if !did_collapse
-                                && !is_structural
-                                && !logical_elements.is_empty()
-                                && !is_block_parent
-                                && (!has_any_tag || !has_newline_text)
-                                && !is_potentially_verbatim
-                            {
-                                let child_indent = if is_inline_tag(name) {
-                                    self.indent_level
-                                } else {
-                                    self.indent_level + 1
-                                };
-                                let content = format_range_inlined_joined(
-                                    &logical_elements,
-                                    &self.tokens,
-                                    child_indent,
-                                    self.config,
-                                );
-                                let collapsed_content = content.trim();
-
-                                trim_trailing_whitespace(&mut self.output);
-                                self.output.push('\n');
-                                self.output
-                                    .push_str(&" ".repeat(child_indent * self.config.indent));
-                                self.output.push_str(collapsed_content);
-                                trim_trailing_whitespace(&mut self.output);
-                                self.output.push('\n');
-                                self.output
-                                    .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                                self.output.push_str(&format!("</{}>", name));
-                                let mut should_newline = true;
-                                if is_inline_tag(name) && j + 1 < self.tokens.len() {
-                                    let next_token = &self.tokens[j + 1];
-                                    if next_token.line() == token.ends_on_line()
-                                        && !token.raw().ends_with('\n')
-                                        && !token.raw().ends_with("\r\n")
-                                        && is_inline_ish(next_token, self.config)
+                            /*
+                                    if !did_collapse
+                                        && !is_structural
+                                        && !logical_elements.is_empty()
+                                        && !is_block_parent
+                                        && (!has_any_tag || !has_newline_text)
+                                        && !is_potentially_verbatim
                                     {
-                                        should_newline = false;
-                                    }
-                                    if let Token::Text { raw: r, .. } = next_token {
-                                        if r.starts_with('\n') || r.starts_with("\r\n") {
-                                            should_newline = false;
+                                        let child_indent = if is_inline_tag(name) {
+                                            self.indent_level
+                                        } else {
+                                            self.indent_level + 1
+                                        };
+                                        let content = format_range_inlined_joined(
+                                            &logical_elements,
+                                            &self.tokens,
+                                            child_indent,
+                                            self.config,
+                                        );
+                                        let collapsed_content = content.trim();
+
+                                        trim_trailing_whitespace(&mut self.output);
+                            self.push_newline();
+                                        self.output
+                                            .push_str(&" ".repeat(child_indent * self.config.indent));
+                                        self.push_content(collapsed_content);
+                                        trim_trailing_whitespace(&mut self.output);
+                            self.push_newline();
+                                        self.output
+                                            .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                                        self.push_content(&format!("</{}>", name));
+                                        let mut should_newline = true;
+                                        if is_inline_tag(name) && j + 1 < self.tokens.len() {
+                                            let next_token = &self.tokens[j + 1];
+                                            if next_token.line() == token.ends_on_line()
+                                                && !token.raw().ends_with('\n')
+                                                && !token.raw().ends_with("\r\n")
+                                                && is_inline_ish(next_token, self.config)
+                                            {
+                                                should_newline = false;
+                                            }
+                                            if let Token::Text { raw: r, .. } = next_token {
+                                                if r.starts_with('\n') || r.starts_with("\r\n") {
+                                                    should_newline = false;
+                                                }
+                                            }
                                         }
+                                        if should_newline {
+                                            trim_trailing_whitespace(&mut self.output);
+                                    self.push_newline();
+                                        } else {
+                                            self.at_start_of_line = false;
+                                        }
+                                        self.pos = j;
+                                        did_collapse = true;
                                     }
-                                }
-                                if should_newline {
-                                    trim_trailing_whitespace(&mut self.output);
-                                    self.output.push('\n');
-                                    self.at_start_of_line = true;
-                                } else {
-                                    self.at_start_of_line = false;
-                                }
-                                self.pos = j;
-                                did_collapse = true;
-                            }
+                                    */
                         }
                     }
                 }
@@ -573,9 +615,8 @@ impl<'a> Formatter<'a> {
                         self.verbatim_tags.push(name_lower.clone());
                     }
 
-                    let mut should_newline = false;
                     if !is_verbatim {
-                        should_newline = true;
+                        let mut should_newline = true;
                         if !is_structural && self.pos + 1 < self.tokens.len() {
                             let next_token = &self.tokens[self.pos + 1];
                             if next_token.line() == token.ends_on_line()
@@ -589,8 +630,7 @@ impl<'a> Formatter<'a> {
                         }
                         if should_newline {
                             trim_trailing_whitespace(&mut self.output);
-                            self.output.push('\n');
-                            self.at_start_of_line = true;
+                            self.push_newline();
                         } else {
                             self.at_start_of_line = false;
                         }
@@ -600,29 +640,19 @@ impl<'a> Formatter<'a> {
                     }
 
                     let mut incremented = false;
-                    let mut will_start_newline = should_newline;
-                    if !will_start_newline && self.pos + 1 < self.tokens.len() {
-                        if let Token::Text { raw: r, .. } = &self.tokens[self.pos + 1] {
-                            if r.starts_with('\n') || r.starts_with("\r\n") {
-                                will_start_newline = true;
-                            }
-                        }
-                    }
-
-                    let has_newline_in_children = children
-                        .iter()
-                        .any(|&idx| self.tokens[idx].raw().contains('\n'));
 
                     if !is_self_closing
                         && should_indent_children(name)
-                        && (!is_inline_tag(name)
-                            || started_on_newline
-                            || will_start_newline
-                            || has_newline_in_children)
+                        && !already_incremented_on_this_line
                         && !is_verbatim
                     {
-                        self.indent_level += 1;
-                        incremented = true;
+                        let already_incremented =
+                            self.last_increment_line == Some(self.output_line_index);
+                        if !already_incremented {
+                            self.indent_level += 1;
+                            self.last_increment_line = Some(self.output_line_index);
+                            incremented = true;
+                        }
                     }
                     if !is_self_closing {
                         self.parent_stack.push((self.pos, incremented));
@@ -635,7 +665,7 @@ impl<'a> Formatter<'a> {
     fn handle_text(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n') || raw.ends_with("\r\n");
         } else {
             let trimmed = raw.trim();
@@ -649,8 +679,7 @@ impl<'a> Formatter<'a> {
                         blank_lines += 1;
                         if blank_lines <= self.config.max_blank_lines {
                             trim_trailing_whitespace(&mut self.output);
-                            self.output.push('\n');
-                            self.at_start_of_line = true;
+                            self.push_newline();
                         }
                         continue;
                     }
@@ -659,28 +688,28 @@ impl<'a> Formatter<'a> {
                     if self.at_start_of_line {
                         self.output
                             .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                        self.output.push_str(line.trim_start());
+                        self.push_content(line.trim_start());
                     } else if idx == 0 {
                         if raw.starts_with('\n') || raw.starts_with("\r\n") {
                             trim_trailing_whitespace(&mut self.output);
-                            self.output.push('\n');
+                            self.push_newline();
                             self.output
                                 .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                            self.output.push_str(line.trim_start());
+                            self.push_content(line.trim_start());
                         } else {
                             // Continuing inline. We want to preserve original leading spaces
                             let leading_spaces = raw.chars().take_while(|&c| c == ' ').count();
                             if leading_spaces > 0 {
                                 self.output.push_str(&" ".repeat(leading_spaces));
                             }
-                            self.output.push_str(line);
+                            self.push_content(line);
                         }
                     } else {
                         trim_trailing_whitespace(&mut self.output);
-                        self.output.push('\n');
+                        self.push_newline();
                         self.output
                             .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                        self.output.push_str(line.trim_start());
+                        self.push_content(line.trim_start());
                     }
 
                     if is_last_line {
@@ -703,8 +732,7 @@ impl<'a> Formatter<'a> {
 
                         if should_newline {
                             trim_trailing_whitespace(&mut self.output);
-                            self.output.push('\n');
-                            self.at_start_of_line = true;
+                            self.push_newline();
                         } else {
                             // Preserve original trailing space if any
                             let trailing_spaces =
@@ -716,19 +744,19 @@ impl<'a> Formatter<'a> {
                         }
                     } else {
                         trim_trailing_whitespace(&mut self.output);
-                        self.output.push('\n');
-                        self.at_start_of_line = true;
+                        self.push_newline();
                     }
                 }
             } else if !raw.is_empty() {
                 if raw.contains('\n') {
                     if !self.at_start_of_line {
                         trim_trailing_whitespace(&mut self.output);
-                        self.output.push('\n');
+                        self.push_newline();
                     }
+                    self.output_line_index += raw.chars().filter(|&c| c == '\n').count();
                     self.at_start_of_line = true;
                 } else if !self.at_start_of_line {
-                    self.output.push_str(raw);
+                    self.push_content(raw);
                 }
             }
         }
@@ -737,14 +765,14 @@ impl<'a> Formatter<'a> {
     fn handle_django_var(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             if self.at_start_of_line {
                 self.output
                     .push_str(&" ".repeat(self.indent_level * self.config.indent));
             }
-            self.output.push_str(&normalize_django(raw));
+            self.push_content(&normalize_django(raw));
 
             let mut should_newline = true;
             if self.pos + 1 < self.tokens.len() {
@@ -765,8 +793,7 @@ impl<'a> Formatter<'a> {
 
             if should_newline {
                 trim_trailing_whitespace(&mut self.output);
-                self.output.push('\n');
-                self.at_start_of_line = true;
+                self.push_newline();
             } else {
                 self.at_start_of_line = false;
             }
@@ -805,9 +832,9 @@ impl<'a> Formatter<'a> {
                             if !content.contains('\n') {
                                 let normalized_start = normalize_django(raw);
                                 let normalized_end = normalize_django(self.tokens[j].raw());
-                                self.output.push_str(&normalized_start);
-                                self.output.push_str(content.trim());
-                                self.output.push_str(&normalized_end);
+                                self.push_content(&normalized_start);
+                                self.push_content(content.trim());
+                                self.push_content(&normalized_end);
                                 self.at_start_of_line = false;
                                 self.pos = j;
                                 return;
@@ -816,7 +843,7 @@ impl<'a> Formatter<'a> {
                     }
                 }
             }
-            self.output.push_str(raw);
+            self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             let tag_name = get_django_tag_name(raw).unwrap_or("");
@@ -830,12 +857,12 @@ impl<'a> Formatter<'a> {
             let is_reindent = is_reindent_tag(tag_name);
 
             if (is_closing && is_block) || is_reindent {
-                let mut incremented = false;
-                if let Some((_, inc)) = self.parent_stack.pop() {
-                    incremented = inc;
-                }
-                if incremented {
+                self.parent_stack.pop();
+
+                let already_decremented = self.last_decrement_line == Some(self.output_line_index);
+                if !already_decremented {
                     self.indent_level = self.indent_level.saturating_sub(1);
+                    self.last_decrement_line = Some(self.output_line_index);
                 }
             }
 
@@ -844,8 +871,7 @@ impl<'a> Formatter<'a> {
 
             if !self.at_start_of_line && (is_block || is_reindent) {
                 trim_trailing_whitespace(&mut self.output);
-                self.output.push('\n');
-                self.at_start_of_line = true;
+                self.push_newline();
             }
 
             if !is_closing && is_block {
@@ -945,12 +971,11 @@ impl<'a> Formatter<'a> {
                                 self.output
                                     .push_str(&" ".repeat(self.indent_level * self.config.indent));
                             }
-                            self.output.push_str(&normalized_start);
-                            self.output.push_str(collapsed_content);
-                            self.output.push_str(&normalized_end);
+                            self.push_content(&normalized_start);
+                            self.push_content(collapsed_content);
+                            self.push_content(&normalized_end);
                             trim_trailing_whitespace(&mut self.output);
-                            self.output.push('\n');
-                            self.at_start_of_line = true;
+                            self.push_newline();
                             self.pos = j;
                             did_collapse = true;
                         }
@@ -963,7 +988,7 @@ impl<'a> Formatter<'a> {
                     self.output
                         .push_str(&" ".repeat(self.indent_level * self.config.indent));
                 }
-                self.output.push_str(&normalize_django(raw));
+                self.push_content(&normalize_django(raw));
 
                 if raw.contains("djlint:off") {
                     self.formatting_enabled = false;
@@ -988,8 +1013,7 @@ impl<'a> Formatter<'a> {
 
                 if should_newline {
                     trim_trailing_whitespace(&mut self.output);
-                    self.output.push('\n');
-                    self.at_start_of_line = true;
+                    self.push_newline();
                 } else {
                     self.at_start_of_line = false;
                 }
@@ -997,8 +1021,15 @@ impl<'a> Formatter<'a> {
                 if (!is_closing && is_block) || is_reindent {
                     let (_, closing_idx) = get_children_info(self.pos, &self.tokens);
                     if closing_idx.is_some() || is_reindent {
-                        self.indent_level += 1;
-                        self.parent_stack.push((self.pos, true));
+                        let already_incremented =
+                            self.last_increment_line == Some(self.output_line_index);
+                        let mut incremented = false;
+                        if !already_incremented {
+                            self.indent_level += 1;
+                            self.last_increment_line = Some(self.output_line_index);
+                            incremented = true;
+                        }
+                        self.parent_stack.push((self.pos, incremented));
                     }
                 }
             }
@@ -1302,7 +1333,13 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
             !is_block_tag(actual_tag_name, &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
-        Token::Tag { name, .. } => is_inline_tag(name),
+        Token::Tag { name, .. } => {
+            let res = is_inline_tag(name);
+            if *name == "b" {
+                // eprintln!("DEBUG: is_inline_ish for b: {}", res);
+            }
+            res
+        }
         Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
         Token::Doctype { .. } => false,
     }
