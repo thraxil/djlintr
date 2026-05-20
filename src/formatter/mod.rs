@@ -946,7 +946,12 @@ impl<'a> Formatter<'a> {
                             self.config,
                         );
                         let collapsed_content = content.trim();
-                        let projected_len = (self.indent_level * self.config.indent)
+
+                        // djlint's condense step does not count indentation
+                        // in the line length check — it only uses 1 space
+                        // before the opening tag. We match that behavior so
+                        // deeply-nested single-child blocks still collapse.
+                        let condensed_len = 1
                             + normalized_start.len()
                             + collapsed_content.len()
                             + normalized_end.len();
@@ -964,7 +969,7 @@ impl<'a> Formatter<'a> {
                             }
                         });
 
-                        if projected_len <= self.config.max_line_length
+                        if condensed_len < self.config.max_line_length
                             && (all_strictly_inline || non_whitespace_elements.len() <= 1)
                         {
                             if self.at_start_of_line {
