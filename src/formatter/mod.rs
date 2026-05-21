@@ -108,7 +108,6 @@ struct Formatter<'a> {
     last_increment_line: Option<usize>,
     last_decrement_line: Option<usize>,
     output_line_index: usize,
-    current_line_has_non_whitespace: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -127,7 +126,6 @@ impl<'a> Formatter<'a> {
             last_increment_line: None,
             last_decrement_line: None,
             output_line_index: 0,
-            current_line_has_non_whitespace: false,
         }
     }
 
@@ -135,7 +133,6 @@ impl<'a> Formatter<'a> {
         self.output.push('\n');
         self.output_line_index += 1;
         self.at_start_of_line = true;
-        self.current_line_has_non_whitespace = false;
     }
 
     fn push_content(&mut self, s: &str) {
@@ -143,21 +140,18 @@ impl<'a> Formatter<'a> {
             for (idx, line) in s.split('\n').enumerate() {
                 if idx > 0 {
                     self.output_line_index += 1;
-                    self.current_line_has_non_whitespace = false;
                     self.at_start_of_line = true;
                 }
                 self.output.push_str(line);
                 if idx < s.split('\n').count() - 1 {
                     self.output.push('\n');
                 } else if !line.trim().is_empty() {
-                    self.current_line_has_non_whitespace = true;
                     self.at_start_of_line = false;
                 }
             }
         } else {
             self.output.push_str(s);
             if !s.trim().is_empty() {
-                self.current_line_has_non_whitespace = true;
                 self.at_start_of_line = false;
             }
         }
@@ -265,10 +259,10 @@ impl<'a> Formatter<'a> {
                     let was_verbatim_name = self.verbatim_tags.pop();
                     let is_closing_verbatim = was_verbatim_name.is_some();
 
-                    self.parent_stack.pop();
+                    let was_incremented =
+                        self.parent_stack.pop().map(|(_, inc)| inc).unwrap_or(false);
 
-                    let skip_decrement = !should_indent_children(name);
-                    if !skip_decrement {
+                    if was_incremented {
                         let already_decremented =
                             self.last_decrement_line == Some(self.output_line_index);
                         if !already_decremented {
@@ -320,13 +314,13 @@ impl<'a> Formatter<'a> {
             }
 
             if *is_closing {
-                self.parent_stack.pop();
+                let was_incremented = self.parent_stack.pop().map(|(_, inc)| inc).unwrap_or(false);
 
-                // Skip decrement for tags that intentionally don't indent
-                // their children (SVG containers like <g>, <defs>, etc.).
-                let skip_decrement = !should_indent_children(name);
-
-                if !skip_decrement {
+                // Only decrement if the opening tag actually incremented.
+                // Tags that didn't increment include:
+                // - SVG containers / verbatim tags (should_indent_children=false)
+                // - Tags where last_increment_line dedup prevented the increment
+                if was_incremented {
                     let already_decremented =
                         self.last_decrement_line == Some(self.output_line_index);
                     if !already_decremented {
@@ -378,7 +372,7 @@ impl<'a> Formatter<'a> {
                     self.push_newline();
                 }
 
-                let already_incremented_on_this_line = self.current_line_has_non_whitespace;
+                let was_at_start_of_line = self.at_start_of_line;
 
                 if self.at_start_of_line {
                     self.output
@@ -649,21 +643,41 @@ impl<'a> Formatter<'a> {
                             formatted_tag.ends_with('\n') || formatted_tag.ends_with("\r\n");
                     }
 
+                    // Reset last_increment_line when we pushed a newline.
+                    // The increment below will be on the NEW line (where
+                    // children will be written), and we don't want it to
+                    // block the first child from also incrementing.
+                    let pushed_newline = self.at_start_of_line;
+
                     let mut incremented = false;
+
+                    // Inline tags that appear mid-line (not at the start
+                    // of a line) should not increment indent. This matches
+                    // djlint where inline tags mid-line don't affect
+                    // indentation (e.g., "by <span>" keeps <span>'s
+                    // children at the same level).
+                    let inline_mid_line = is_inline_tag(name) && !was_at_start_of_line;
 
                     if !is_self_closing
                         && should_indent_children(name)
-                        && !already_incremented_on_this_line
                         && !is_verbatim
+                        && !inline_mid_line
                     {
-                        let already_incremented =
-                            self.last_increment_line == Some(self.output_line_index);
+                        // If we just pushed a newline, the children will be
+                        // on a new line. Clear the dedup so the first child
+                        // can increment independently.
+                        let already_incremented = if pushed_newline {
+                            false
+                        } else {
+                            self.last_increment_line == Some(self.output_line_index)
+                        };
                         if !already_incremented {
                             self.indent_level += 1;
                             self.last_increment_line = Some(self.output_line_index);
                             incremented = true;
                         }
                     }
+
                     if !is_self_closing {
                         self.parent_stack.push((self.pos, incremented));
                     }
