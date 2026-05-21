@@ -267,11 +267,14 @@ impl<'a> Formatter<'a> {
 
                     self.parent_stack.pop();
 
-                    let already_decremented =
-                        self.last_decrement_line == Some(self.output_line_index);
-                    if !already_decremented {
-                        self.indent_level = self.indent_level.saturating_sub(1);
-                        self.last_decrement_line = Some(self.output_line_index);
+                    let skip_decrement = !should_indent_children(name);
+                    if !skip_decrement {
+                        let already_decremented =
+                            self.last_decrement_line == Some(self.output_line_index);
+                        if !already_decremented {
+                            self.indent_level = self.indent_level.saturating_sub(1);
+                            self.last_decrement_line = Some(self.output_line_index);
+                        }
                     }
 
                     if !self.at_start_of_line && !is_inline_tag(name) && !is_closing_verbatim {
