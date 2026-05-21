@@ -1082,8 +1082,6 @@ fn trim_trailing_whitespace(s: &mut String) {
 }
 
 static ATTR_RE: OnceLock<Regex> = OnceLock::new();
-static STYLE_ATTR_RE: OnceLock<Regex> = OnceLock::new();
-
 static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
 
 fn format_tag(
@@ -1122,15 +1120,14 @@ fn format_tag(
         })
         .collect();
 
-    let mut final_content = String::new();
     let mut last_end = 0;
     let mut prev_was_django_block = false;
     let mut django_block_depth: usize = 0;
 
-    // Build two content strings: one with style normalization (for output)
-    // and one without (for the wrapping length check, matching djlint).
+    // Build content string without style normalization. djlint only
+    // reformats style attributes when wrapping, so this string is used
+    // both for the length check and for the non-wrapping output path.
     let mut raw_final_content = String::new();
-    let style_attr_re = STYLE_ATTR_RE.get_or_init(|| Regex::new(r#"^style\s*="#).unwrap());
     for (idx, m) in attr_re.find_iter(content).enumerate() {
         let filler = &content[last_end..m.start()];
         let attr = m.as_str();
@@ -1146,22 +1143,12 @@ fn format_tag(
                 || attr_content.starts_with("elif"));
 
         if prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0) {
-            final_content.push_str(filler.trim());
             raw_final_content.push_str(filler.trim());
         } else {
-            final_content.push_str(filler);
             raw_final_content.push_str(filler);
         }
 
-        let normalized = if style_attr_re.is_match(attr) {
-            format_style_attribute(attr, "")
-        } else {
-            normalize_django(attr)
-        };
-        // raw_final_content always uses normalize_django (no style stripping)
         let raw_normalized = normalize_django(attr);
-
-        final_content.push_str(&normalized);
         raw_final_content.push_str(&raw_normalized);
 
         if is_django_block {
@@ -1184,35 +1171,33 @@ fn format_tag(
     }
     let filler = &content[last_end..];
     if prev_was_django_block {
-        final_content.push_str(filler.trim());
         raw_final_content.push_str(filler.trim());
     } else {
-        final_content.push_str(filler);
         raw_final_content.push_str(filler);
     }
 
-    let normalized_final_content = whitespace_re.replace_all(&final_content, " ");
-
-    // djlint measures the raw attribute string (before style normalization)
-    // against max_attribute_length using strict `<`. We build a separate
-    // measurement string that normalizes whitespace but preserves trailing
-    // semicolons in style values.
+    // Collapse whitespace (e.g., multi-line attributes) to single spaces.
+    // This string preserves style attribute values as-is (including trailing
+    // semicolons), matching djlint which only reformats style when wrapping.
     let raw_attrs_collapsed = whitespace_re.replace_all(&raw_final_content, " ");
     let raw_attrs_len = raw_attrs_collapsed.trim().len();
 
     let total_line_len =
-        (indent_level * config.indent) + name.len() + 1 + normalized_final_content.len() + 1;
+        (indent_level * config.indent) + name.len() + 1 + raw_attrs_collapsed.len() + 1;
 
     if (raw_attrs_len < config.max_attribute_length && total_line_len <= config.max_line_length)
         || !should_wrap_attributes(name)
     {
+        // When not wrapping, use raw_attrs_collapsed which preserves the
+        // original style attribute (including trailing semicolons), matching
+        // djlint's behavior of only reformatting style when wrapping.
         let mut formatted = if raw.starts_with("</") {
             format!("</{}", name)
         } else {
             format!("<{}", name)
         };
 
-        formatted.push_str(normalized_final_content.trim_end());
+        formatted.push_str(raw_attrs_collapsed.trim_end());
 
         if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
             formatted.push_str(" />");
