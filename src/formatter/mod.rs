@@ -1115,7 +1115,11 @@ fn format_tag(
 
     let attrs: Vec<String> = attr_re
         .find_iter(content)
-        .map(|m| normalize_django(m.as_str()))
+        .map(|m| {
+            let normalized = normalize_django(m.as_str());
+            // Collapse internal whitespace (e.g., multi-line attribute values)
+            whitespace_re.replace_all(&normalized, " ").to_string()
+        })
         .collect();
 
     let mut final_content = String::new();
@@ -1123,6 +1127,9 @@ fn format_tag(
     let mut prev_was_django_block = false;
     let mut django_block_depth: usize = 0;
 
+    // Build two content strings: one with style normalization (for output)
+    // and one without (for the wrapping length check, matching djlint).
+    let mut raw_final_content = String::new();
     let style_attr_re = STYLE_ATTR_RE.get_or_init(|| Regex::new(r#"^style\s*="#).unwrap());
     for (idx, m) in attr_re.find_iter(content).enumerate() {
         let filler = &content[last_end..m.start()];
@@ -1140,8 +1147,10 @@ fn format_tag(
 
         if prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0) {
             final_content.push_str(filler.trim());
+            raw_final_content.push_str(filler.trim());
         } else {
             final_content.push_str(filler);
+            raw_final_content.push_str(filler);
         }
 
         let normalized = if style_attr_re.is_match(attr) {
@@ -1149,8 +1158,11 @@ fn format_tag(
         } else {
             normalize_django(attr)
         };
+        // raw_final_content always uses normalize_django (no style stripping)
+        let raw_normalized = normalize_django(attr);
 
         final_content.push_str(&normalized);
+        raw_final_content.push_str(&raw_normalized);
 
         if is_django_block {
             if attr_content.starts_with("if")
@@ -1173,17 +1185,25 @@ fn format_tag(
     let filler = &content[last_end..];
     if prev_was_django_block {
         final_content.push_str(filler.trim());
+        raw_final_content.push_str(filler.trim());
     } else {
         final_content.push_str(filler);
+        raw_final_content.push_str(filler);
     }
 
     let normalized_final_content = whitespace_re.replace_all(&final_content, " ");
-    let attrs_total_len = normalized_final_content.trim_start().len();
+
+    // djlint measures the raw attribute string (before style normalization)
+    // against max_attribute_length using strict `<`. We build a separate
+    // measurement string that normalizes whitespace but preserves trailing
+    // semicolons in style values.
+    let raw_attrs_collapsed = whitespace_re.replace_all(&raw_final_content, " ");
+    let raw_attrs_len = raw_attrs_collapsed.trim().len();
 
     let total_line_len =
         (indent_level * config.indent) + name.len() + 1 + normalized_final_content.len() + 1;
 
-    if (attrs_total_len <= config.max_attribute_length && total_line_len <= config.max_line_length)
+    if (raw_attrs_len < config.max_attribute_length && total_line_len <= config.max_line_length)
         || !should_wrap_attributes(name)
     {
         let mut formatted = if raw.starts_with("</") {
