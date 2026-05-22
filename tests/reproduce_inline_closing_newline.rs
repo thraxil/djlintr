@@ -10,10 +10,11 @@ mod tests {
     fn test_closing_inline_tag_on_own_line_when_expanded() {
         let config = Config::default();
 
+        // Attributes must be long enough to wrap (exceed max_attribute_length=70)
         let input = r#"<div>
-<a href="{{ photo.url }}"
-title="{{ photo.caption }}">
-<img class="img-polaroid" src="{{ photo.src }}" /></a>
+<a href="{{ photo.photo.get_absolute_url }}"
+title="{{ photo.photo.caption }}">
+<img class="img-polaroid" src="{{ photo.photo.get_100h_src }}" /></a>
 </div>"#;
 
         let output = format(&config, input);

@@ -104,9 +104,10 @@ struct Formatter<'a> {
     formatting_enabled: bool,
     verbatim_tags: Vec<String>,
     at_start_of_line: bool,
-    /// Stack of (token_pos, incremented, multiline_children).
-    /// `multiline_children` is true when the opening tag pushed a newline,
-    /// meaning children are on separate lines from the opening tag.
+    /// Stack of (token_pos, incremented, tag_was_wrapped).
+    /// `tag_was_wrapped` is true when the opening tag's attributes wrapped
+    /// across multiple lines, meaning children and the closing tag should
+    /// be on their own lines.
     parent_stack: Vec<(usize, bool, bool)>,
     last_increment_line: Option<usize>,
     last_decrement_line: Option<usize>,
@@ -322,7 +323,7 @@ impl<'a> Formatter<'a> {
             if *is_closing {
                 let popped = self.parent_stack.pop();
                 let was_incremented = popped.map(|(_, inc, _)| inc).unwrap_or(false);
-                let multiline_children = popped.map(|(_, _, ml)| ml).unwrap_or(false);
+                let tag_was_wrapped = popped.map(|(_, _, tw)| tw).unwrap_or(false);
 
                 // Only decrement if the opening tag actually incremented.
                 if was_incremented {
@@ -337,9 +338,9 @@ impl<'a> Formatter<'a> {
                 // Push a newline before the closing tag when:
                 // - not at start of line AND
                 // - the tag is a block-level tag, OR
-                // - the tag is inline but had children on separate lines
-                //   (the opening tag pushed a newline for its children)
-                if !self.at_start_of_line && (!is_inline_tag(name) || multiline_children) {
+                // - the tag is inline but had wrapped attributes (meaning
+                //   children are on separate lines from the opening tag)
+                if !self.at_start_of_line && (!is_inline_tag(name) || tag_was_wrapped) {
                     trim_trailing_whitespace(&mut self.output);
                     self.push_newline();
                 }
@@ -629,9 +630,10 @@ impl<'a> Formatter<'a> {
                         self.verbatim_tags.push(name_lower.clone());
                     }
 
+                    let tag_was_wrapped = formatted_tag.contains('\n');
+
                     if !is_verbatim {
                         let mut should_newline = true;
-                        let tag_was_wrapped = formatted_tag.contains('\n');
                         if !is_structural && !tag_was_wrapped && self.pos + 1 < self.tokens.len() {
                             let next_token = &self.tokens[self.pos + 1];
                             if next_token.line() == token.ends_on_line()
@@ -691,7 +693,7 @@ impl<'a> Formatter<'a> {
 
                     if !is_self_closing {
                         self.parent_stack
-                            .push((self.pos, incremented, pushed_newline));
+                            .push((self.pos, incremented, tag_was_wrapped));
                     }
                 }
             }
