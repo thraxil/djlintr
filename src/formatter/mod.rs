@@ -104,7 +104,10 @@ struct Formatter<'a> {
     formatting_enabled: bool,
     verbatim_tags: Vec<String>,
     at_start_of_line: bool,
-    parent_stack: Vec<(usize, bool)>,
+    /// Stack of (token_pos, incremented, multiline_children).
+    /// `multiline_children` is true when the opening tag pushed a newline,
+    /// meaning children are on separate lines from the opening tag.
+    parent_stack: Vec<(usize, bool, bool)>,
     last_increment_line: Option<usize>,
     last_decrement_line: Option<usize>,
     output_line_index: usize,
@@ -259,8 +262,11 @@ impl<'a> Formatter<'a> {
                     let was_verbatim_name = self.verbatim_tags.pop();
                     let is_closing_verbatim = was_verbatim_name.is_some();
 
-                    let was_incremented =
-                        self.parent_stack.pop().map(|(_, inc)| inc).unwrap_or(false);
+                    let was_incremented = self
+                        .parent_stack
+                        .pop()
+                        .map(|(_, inc, _)| inc)
+                        .unwrap_or(false);
 
                     if was_incremented {
                         let already_decremented =
@@ -314,12 +320,11 @@ impl<'a> Formatter<'a> {
             }
 
             if *is_closing {
-                let was_incremented = self.parent_stack.pop().map(|(_, inc)| inc).unwrap_or(false);
+                let popped = self.parent_stack.pop();
+                let was_incremented = popped.map(|(_, inc, _)| inc).unwrap_or(false);
+                let multiline_children = popped.map(|(_, _, ml)| ml).unwrap_or(false);
 
                 // Only decrement if the opening tag actually incremented.
-                // Tags that didn't increment include:
-                // - SVG containers / verbatim tags (should_indent_children=false)
-                // - Tags where last_increment_line dedup prevented the increment
                 if was_incremented {
                     let already_decremented =
                         self.last_decrement_line == Some(self.output_line_index);
@@ -329,7 +334,12 @@ impl<'a> Formatter<'a> {
                     }
                 }
 
-                if !self.at_start_of_line && !is_inline_tag(name) {
+                // Push a newline before the closing tag when:
+                // - not at start of line AND
+                // - the tag is a block-level tag, OR
+                // - the tag is inline but had children on separate lines
+                //   (the opening tag pushed a newline for its children)
+                if !self.at_start_of_line && (!is_inline_tag(name) || multiline_children) {
                     trim_trailing_whitespace(&mut self.output);
                     self.push_newline();
                 }
@@ -621,7 +631,8 @@ impl<'a> Formatter<'a> {
 
                     if !is_verbatim {
                         let mut should_newline = true;
-                        if !is_structural && self.pos + 1 < self.tokens.len() {
+                        let tag_was_wrapped = formatted_tag.contains('\n');
+                        if !is_structural && !tag_was_wrapped && self.pos + 1 < self.tokens.len() {
                             let next_token = &self.tokens[self.pos + 1];
                             if next_token.line() == token.ends_on_line()
                                 && !token.raw().ends_with('\n')
@@ -679,7 +690,8 @@ impl<'a> Formatter<'a> {
                     }
 
                     if !is_self_closing {
-                        self.parent_stack.push((self.pos, incremented));
+                        self.parent_stack
+                            .push((self.pos, incremented, pushed_newline));
                     }
                 }
             }
@@ -1058,7 +1070,7 @@ impl<'a> Formatter<'a> {
                             self.last_increment_line = Some(self.output_line_index);
                             incremented = true;
                         }
-                        self.parent_stack.push((self.pos, incremented));
+                        self.parent_stack.push((self.pos, incremented, false));
                     }
                 }
             }
