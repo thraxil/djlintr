@@ -104,11 +104,8 @@ struct Formatter<'a> {
     formatting_enabled: bool,
     verbatim_tags: Vec<String>,
     at_start_of_line: bool,
-    /// Stack of (token_pos, incremented, tag_was_wrapped).
-    /// `tag_was_wrapped` is true when the opening tag's attributes wrapped
-    /// across multiple lines, meaning children and the closing tag should
-    /// be on their own lines.
-    parent_stack: Vec<(usize, bool, bool)>,
+    /// Stack of (token_pos, incremented, tag_was_wrapped, was_inline_mid_line).
+    parent_stack: Vec<(usize, bool, bool, bool)>,
     last_increment_line: Option<usize>,
     last_decrement_line: Option<usize>,
     output_line_index: usize,
@@ -266,7 +263,7 @@ impl<'a> Formatter<'a> {
                     let was_incremented = self
                         .parent_stack
                         .pop()
-                        .map(|(_, inc, _)| inc)
+                        .map(|(_, inc, _, _)| inc)
                         .unwrap_or(false);
 
                     if was_incremented {
@@ -322,11 +319,20 @@ impl<'a> Formatter<'a> {
 
             if *is_closing {
                 let popped = self.parent_stack.pop();
-                let was_incremented = popped.map(|(_, inc, _)| inc).unwrap_or(false);
-                let tag_was_wrapped = popped.map(|(_, _, tw)| tw).unwrap_or(false);
+                let was_incremented = popped.map(|(_, inc, _, _)| inc).unwrap_or(false);
+                let tag_was_wrapped = popped.map(|(_, _, tw, _)| tw).unwrap_or(false);
+                let was_inline_mid_line = popped.map(|(_, _, _, ml)| ml).unwrap_or(false);
 
-                // Only decrement if the opening tag actually incremented.
-                if was_incremented {
+                // Decrement when the opening tag incremented, OR when it
+                // was an inline tag mid-line that skipped incrementing AND
+                // the closing tag is at the start of a line (meaning the
+                // content spanned multiple lines). When both open/close
+                // are on the same line, the net indent change is zero.
+                let should_decrement = was_incremented
+                    || (was_inline_mid_line
+                        && should_indent_children(name)
+                        && self.at_start_of_line);
+                if should_decrement {
                     let already_decremented =
                         self.last_decrement_line == Some(self.output_line_index);
                     if !already_decremented {
@@ -345,30 +351,8 @@ impl<'a> Formatter<'a> {
                     self.push_newline();
                 }
                 if self.at_start_of_line {
-                    // For closing inline tags that didn't increment AND
-                    // are followed by another closing tag on the same
-                    // source line, use the parent's indent level (one less).
-                    // This matches djlint where multiple closing tags on
-                    // the same line share the most-unindented level.
-                    let next_is_closing_on_same_line = self.pos + 1 < self.tokens.len()
-                        && matches!(
-                            &self.tokens[self.pos + 1],
-                            Token::Tag {
-                                is_closing: true,
-                                ..
-                            }
-                        )
-                        && self.tokens[self.pos + 1].line() == token.ends_on_line();
-                    let close_indent = if !was_incremented
-                        && is_inline_tag(name)
-                        && next_is_closing_on_same_line
-                    {
-                        self.indent_level.saturating_sub(1)
-                    } else {
-                        self.indent_level
-                    };
                     self.output
-                        .push_str(&" ".repeat(close_indent * self.config.indent));
+                        .push_str(&" ".repeat(self.indent_level * self.config.indent));
                 }
                 self.push_content(&format!("</{}>", name));
 
@@ -720,8 +704,12 @@ impl<'a> Formatter<'a> {
                     }
 
                     if !is_self_closing {
-                        self.parent_stack
-                            .push((self.pos, incremented, tag_was_wrapped));
+                        self.parent_stack.push((
+                            self.pos,
+                            incremented,
+                            tag_was_wrapped,
+                            inline_mid_line,
+                        ));
                     }
                 }
             }
@@ -1127,7 +1115,8 @@ impl<'a> Formatter<'a> {
                             self.last_increment_line = Some(self.output_line_index);
                             incremented = true;
                         }
-                        self.parent_stack.push((self.pos, incremented, false));
+                        self.parent_stack
+                            .push((self.pos, incremented, false, false));
                     }
                 }
             }

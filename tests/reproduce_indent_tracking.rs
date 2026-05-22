@@ -42,8 +42,10 @@ by <span class="author">
 </div>"#;
         let output = format(&config, input);
 
-        // The outer </span> should be at indent 1 (inside <div>),
-        // not indent 2 (which would mean it didn't decrement).
+        // The outer </span> should be at indent 0. djlint always
+        // decrements for closing inline tags, even when the opening tag
+        // was mid-line and didn't increment. This causes the indent to
+        // go below the parent level.
         let lines: Vec<&str> = output.lines().collect();
         let outer_close_span = lines
             .iter()
@@ -53,8 +55,8 @@ by <span class="author">
 
         let indent = outer_close_span.len() - outer_close_span.trim_start().len();
         assert_eq!(
-            indent, 4,
-            "Expected outer </span> at indent 1 (4 spaces), got {} spaces.\nFull output:\n{}",
+            indent, 0,
+            "Expected outer </span> at indent 0, got {} spaces.\nFull output:\n{}",
             indent, output
         );
     }
