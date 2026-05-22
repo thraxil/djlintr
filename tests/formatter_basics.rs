@@ -45,6 +45,10 @@ use rstest::rstest;
     "<div style=\"color: red; background: blue; border: 1px solid black; padding: 10px; margin: 10px;\"></div>",
     "<div style=\"color: red;\n            background: blue;\n            border: 1px solid black;\n            padding: 10px;\n            margin: 10px\"></div>\n"
 )]
+#[case(
+    "<div id=\"main\" role=\"main\">\n\n</div>",
+    "<div id=\"main\" role=\"main\"></div>\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);

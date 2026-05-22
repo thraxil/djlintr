@@ -64,6 +64,48 @@ fn is_html_block_tag(name: &str) -> bool {
     block_tags.contains(&name.to_lowercase().as_str())
 }
 
+/// Tags that may be condensed onto a single line when their content is short
+/// enough. Mirrors the Python djlint `optional_single_line_html_tags` list.
+fn is_condensable_tag(name: &str) -> bool {
+    let tags = [
+        "a",
+        "article",
+        "body",
+        "button",
+        "div",
+        "dt",
+        "em",
+        "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "icon",
+        "label",
+        "legend",
+        "li",
+        "link",
+        "option",
+        "p",
+        "path",
+        "script",
+        "select",
+        "small",
+        "span",
+        "strong",
+        "style",
+        "summary",
+        "td",
+        "th",
+        "title",
+        "tr",
+    ];
+    tags.contains(&name.to_lowercase().as_str())
+}
+
 fn is_structural_tag(name: &str) -> bool {
     let structural_tags = [
         "table", "tbody", "thead", "tfoot", "ul", "ol", "dl", "form", "dd",
@@ -484,10 +526,15 @@ impl<'a> Formatter<'a> {
                             let can_collapse = if is_structural {
                                 false
                             } else if is_block_parent {
-                                if logical_elements.is_empty() {
-                                    // Empty tag. Collapse only if j follows i and is on same line
-                                    j == self.pos + 1
-                                        && self.tokens[j].line() == token.ends_on_line()
+                                if non_whitespace_elements.is_empty() && is_condensable_tag(name) {
+                                    // Empty condensable tag (only whitespace between
+                                    // open/close). Allow collapse; the projected length
+                                    // check below guards against lines that are too long.
+                                    true
+                                } else if non_whitespace_elements.is_empty() {
+                                    // Empty non-condensable tag (e.g. <header>, <footer>).
+                                    // Keep on separate lines.
+                                    false
                                 } else {
                                     // Not empty. Check if all elements are on the same line as the start and end tags.
                                     let mut same_line = self.tokens[j].line() == token.line();
