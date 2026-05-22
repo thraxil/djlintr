@@ -439,15 +439,17 @@ impl<'a> Formatter<'a> {
                         });
 
                         let has_newline_text = logical_elements.iter().any(|range| {
-                            if range.len() == 1 {
-                                if let Token::Text { raw, .. } = &self.tokens[range.start] {
+                            // Check all tokens in the range for newlines,
+                            // not just standalone text tokens. This catches
+                            // newlines inside child tag content (e.g.,
+                            // <b>text\n  text</b>).
+                            (range.start..range.end).any(|idx| {
+                                if let Token::Text { raw, .. } = &self.tokens[idx] {
                                     raw.contains('\n')
                                 } else {
                                     false
                                 }
-                            } else {
-                                false
-                            }
+                            })
                         });
 
                         let non_whitespace_elements: Vec<_> = logical_elements
@@ -494,7 +496,10 @@ impl<'a> Formatter<'a> {
                             } else if has_any_tag {
                                 !has_newline_text
                             } else {
-                                true
+                                // No child tags. Block collapse only when
+                                // newlines separate multiple content pieces
+                                // (not just indentation around one piece).
+                                !has_newline_text || non_whitespace_elements.len() <= 1
                             };
 
                             if can_collapse {
