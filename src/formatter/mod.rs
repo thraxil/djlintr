@@ -1577,18 +1577,22 @@ fn is_tag_range_inlinable(
             if raw.contains("{%") || (!is_parent_django && raw.contains("{{")) {
                 return false;
             }
-            // Check if it's closed
+            // Check if it's closed. Unclosed inline tags (like <span>
+            // without </span>) are still inlinable — djlint condenses
+            // them as part of the surrounding content.
             let last_token = &tokens[range.end - 1];
-            if let Token::Tag {
+            let is_properly_closed = if let Token::Tag {
                 name: n,
                 is_closing: true,
                 ..
             } = last_token
             {
-                if n.to_lowercase() != name.to_lowercase() {
-                    return false;
-                }
-            } else if !is_self_closing {
+                n.to_lowercase() == name.to_lowercase()
+            } else {
+                *is_self_closing
+            };
+
+            if !is_properly_closed && !is_inline_tag(name) {
                 return false;
             }
 
