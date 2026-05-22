@@ -1024,6 +1024,33 @@ impl<'a> Formatter<'a> {
                             self.push_content(&normalized_end);
                             trim_trailing_whitespace(&mut self.output);
                             self.push_newline();
+
+                            // Track unclosed HTML tags in the collapsed
+                            // content. djlint's regex-based indent sees
+                            // opening tags and increments even inside
+                            // condensed blocks, so unclosed tags "leak"
+                            // indent to subsequent lines.
+                            for &child_idx in &children {
+                                match &self.tokens[child_idx] {
+                                    Token::Tag {
+                                        name: n,
+                                        is_closing: false,
+                                        is_self_closing: false,
+                                        ..
+                                    } if is_inline_tag(n) || is_html_block_tag(n) => {
+                                        self.indent_level += 1;
+                                    }
+                                    Token::Tag {
+                                        name: n,
+                                        is_closing: true,
+                                        ..
+                                    } if is_inline_tag(n) || is_html_block_tag(n) => {
+                                        self.indent_level = self.indent_level.saturating_sub(1);
+                                    }
+                                    _ => {}
+                                }
+                            }
+
                             self.pos = j;
                             did_collapse = true;
                         }
