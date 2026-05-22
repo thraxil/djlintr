@@ -280,6 +280,13 @@ impl<'a> Formatter<'a> {
                         self.push_newline();
                     }
                     if self.at_start_of_line {
+                        // For closing verbatim tags (</script>, </style>),
+                        // the verbatim content may have left whitespace
+                        // (tabs/spaces) on the current line. Trim it so
+                        // our space-based indent replaces it cleanly.
+                        if is_closing_verbatim {
+                            trim_trailing_whitespace(&mut self.output);
+                        }
                         self.output
                             .push_str(&" ".repeat(self.indent_level * self.config.indent));
                     }
@@ -720,7 +727,8 @@ impl<'a> Formatter<'a> {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
             self.push_content(raw);
-            self.at_start_of_line = raw.ends_with('\n') || raw.ends_with("\r\n");
+            // Don't override at_start_of_line — push_content already
+            // tracks this correctly based on the content's newlines.
         } else {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
