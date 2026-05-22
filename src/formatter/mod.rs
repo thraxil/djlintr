@@ -345,8 +345,30 @@ impl<'a> Formatter<'a> {
                     self.push_newline();
                 }
                 if self.at_start_of_line {
+                    // For closing inline tags that didn't increment AND
+                    // are followed by another closing tag on the same
+                    // source line, use the parent's indent level (one less).
+                    // This matches djlint where multiple closing tags on
+                    // the same line share the most-unindented level.
+                    let next_is_closing_on_same_line = self.pos + 1 < self.tokens.len()
+                        && matches!(
+                            &self.tokens[self.pos + 1],
+                            Token::Tag {
+                                is_closing: true,
+                                ..
+                            }
+                        )
+                        && self.tokens[self.pos + 1].line() == token.ends_on_line();
+                    let close_indent = if !was_incremented
+                        && is_inline_tag(name)
+                        && next_is_closing_on_same_line
+                    {
+                        self.indent_level.saturating_sub(1)
+                    } else {
+                        self.indent_level
+                    };
                     self.output
-                        .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                        .push_str(&" ".repeat(close_indent * self.config.indent));
                 }
                 self.push_content(&format!("</{}>", name));
 
@@ -681,10 +703,11 @@ impl<'a> Formatter<'a> {
                         && !is_verbatim
                         && !inline_mid_line
                     {
-                        // If we just pushed a newline, the children will be
-                        // on a new line. Clear the dedup so the first child
-                        // can increment independently.
-                        let already_incremented = if pushed_newline {
+                        // Skip dedup when:
+                        // - we just pushed a newline (children on a new line)
+                        // - tag was at start of line (tag is a child that
+                        //   should increment independently of its parent)
+                        let already_incremented = if pushed_newline || was_at_start_of_line {
                             false
                         } else {
                             self.last_increment_line == Some(self.output_line_index)
