@@ -67,6 +67,10 @@ use rstest::rstest;
 )]
 #[case("<p>\n    {{ x }} text\n</p>", "<p>{{ x }} text</p>\n")]
 #[case("<p>\n    text1\n    text2\n</p>", "<p>\n    text1\n    text2\n</p>\n")]
+#[case(
+    "<span>\n    Line one.\n    Line two.</span>",
+    "<span>\n    Line one.\nLine two.</span>\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);

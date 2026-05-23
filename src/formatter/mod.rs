@@ -78,6 +78,19 @@ impl<'a> Formatter<'a> {
             .push_str(&" ".repeat(self.indent_level * self.config.indent));
     }
 
+    /// Push indentation, optionally at one level less than the current
+    /// indent.  Used when a text line will be followed inline by a
+    /// closing inline tag (djlint dedents such lines).
+    fn push_indent_maybe_dedented(&mut self, dedent: bool) {
+        if dedent {
+            let level = self.indent_level.saturating_sub(1);
+            self.output
+                .push_str(&" ".repeat(level * self.config.indent));
+        } else {
+            self.push_indent();
+        }
+    }
+
     /// Trim trailing whitespace from the output and push a newline.
     fn trim_and_newline(&mut self) {
         trim_trailing_whitespace(&mut self.output);
@@ -662,6 +675,29 @@ impl<'a> Formatter<'a> {
             if !trimmed.is_empty() {
                 let lines: Vec<&str> = trimmed.lines().collect();
                 let mut blank_lines = 0;
+
+                // djlint's line-based indenter applies a dedent when a
+                // line ends with a closing inline tag (e.g. `</span>`).
+                // Detect whether the last text line will be followed
+                // inline by such a closing tag and, if so, use the
+                // parent's indent level for that line.  Only apply
+                // when the parent tag actually incremented indent
+                // (i.e. it was at the start of a line, not mid-line).
+                let last_line_closes_inline = self.should_continue_inline(token, true)
+                    && self.pos + 1 < self.tokens.len()
+                    && matches!(
+                        &self.tokens[self.pos + 1],
+                        Token::Tag {
+                            name: n,
+                            is_closing: true,
+                            ..
+                        } if is_inline_tag(n)
+                    )
+                    && self
+                        .parent_stack
+                        .last()
+                        .is_some_and(|&(_, incremented, _, _)| incremented);
+
                 for (idx, line) in lines.iter().enumerate() {
                     let is_last_line = idx == lines.len() - 1;
 
@@ -674,13 +710,18 @@ impl<'a> Formatter<'a> {
                     }
                     blank_lines = 0;
 
+                    // Use the parent's indent when this is the last
+                    // text line and will continue inline into a closing
+                    // inline tag.
+                    let use_dedent = is_last_line && last_line_closes_inline;
+
                     if self.at_start_of_line {
-                        self.push_indent();
+                        self.push_indent_maybe_dedented(use_dedent);
                         self.push_content(line.trim_start());
                     } else if idx == 0 {
                         if raw.starts_with('\n') || raw.starts_with("\r\n") {
                             self.trim_and_newline();
-                            self.push_indent();
+                            self.push_indent_maybe_dedented(use_dedent);
                             self.push_content(line.trim_start());
                         } else {
                             // Continuing inline. We want to preserve original leading spaces
@@ -692,7 +733,7 @@ impl<'a> Formatter<'a> {
                         }
                     } else {
                         self.trim_and_newline();
-                        self.push_indent();
+                        self.push_indent_maybe_dedented(use_dedent);
                         self.push_content(line.trim_start());
                     }
 
