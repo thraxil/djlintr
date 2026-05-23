@@ -104,3 +104,17 @@ fn test_inline_close_midline_preserves_indent() {
     let output = format(&config, source);
     assert_eq!(output, expected);
 }
+
+/// djlint collapses block-level parents (like `<p>`) with no child tags
+/// even when the resulting line exceeds max_line_length.
+#[test]
+fn test_block_parent_collapse_ignores_line_length() {
+    // At 3 levels of nesting (12 spaces indent), the collapsed <p> line
+    // is 121 chars, over the default max_line_length of 120. djlint still
+    // collapses it.
+    let source = "<div>\n    <div>\n        <div>\n            <p class=\"py-2 px-4 font-mono bg-secondary1\">\n                {{ log.level }} - {{ log.created_at|date:\"F d, Y H:i:s e\" }}\n            </p>\n        </div>\n    </div>\n</div>";
+    let expected = "<div>\n    <div>\n        <div>\n            <p class=\"py-2 px-4 font-mono bg-secondary1\">{{ log.level }} - {{ log.created_at|date:\"F d, Y H:i:s e\" }}</p>\n        </div>\n    </div>\n</div>\n";
+    let config = Config::default();
+    let output = format(&config, source);
+    assert_eq!(output, expected);
+}

@@ -648,7 +648,15 @@ impl<'a> Formatter<'a> {
         };
         let projected_len = current_line_len + collapsed_content.len() + name.len() + 3;
 
-        if (projected_len <= self.config.max_line_length || is_potentially_verbatim)
+        // djlint ignores max_line_length when collapsing block-level
+        // elements whose content has no child tags (only text/template
+        // vars).  Match that behavior so deeply-nested paragraphs with
+        // short inline content still collapse.
+        let skip_line_length_check = is_block_parent && !has_any_tag;
+
+        if (projected_len <= self.config.max_line_length
+            || is_potentially_verbatim
+            || skip_line_length_check)
             && (logical_elements.is_empty()
                 && j == self.pos + 1
                 && self.tokens[j].line() == token.ends_on_line()
