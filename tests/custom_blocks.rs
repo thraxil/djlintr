@@ -31,9 +31,21 @@ fn test_django_else_indentation() {
 
 #[test]
 fn test_custom_blocks() {
+    // djlint never collapses custom block tags — they always expand to
+    // multiline, even when the content would fit on one line.
     let mut config = Config::default();
     config.custom_blocks.push("toc".to_string());
     let input = "{% toc %}\n<p>Hello</p>\n{% endtoc %}";
     let output = format(&config, input);
-    assert_eq!(output, "{% toc %}<p>Hello</p>{% endtoc %}\n");
+    assert_eq!(output, "{% toc %}\n    <p>Hello</p>\n{% endtoc %}\n");
+}
+
+#[test]
+fn test_custom_blocks_empty_no_collapse() {
+    // Even empty custom blocks are never collapsed to one line.
+    let mut config = Config::default();
+    config.custom_blocks.push("component".to_string());
+    let input = "{% component \"x\" %}\n{% endcomponent %}";
+    let output = format(&config, input);
+    assert_eq!(output, "{% component \"x\" %}\n{% endcomponent %}\n");
 }

@@ -957,9 +957,17 @@ impl<'a> Formatter<'a> {
                             inner.split_whitespace().count() > 1
                         };
 
+                        // djlint never collapses custom block tags.
+                        let is_custom_block = self
+                            .config
+                            .custom_blocks
+                            .iter()
+                            .any(|b| b.eq_ignore_ascii_case(actual_tag_name));
+
                         if condensed_len < self.config.max_line_length
                             && (all_strictly_inline || non_whitespace_elements.len() <= 1)
                             && !end_has_name
+                            && !is_custom_block
                         {
                             if self.at_start_of_line {
                                 self.push_indent();

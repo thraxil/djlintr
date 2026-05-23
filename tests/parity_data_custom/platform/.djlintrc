@@ -1,0 +1,5 @@
+{
+    "custom_blocks": "component,endcomponent,templatetag,flag,endflag,slot,endslot,tenantflag,endtenantflag",
+    "max_attribute_length": "40",
+    "ignore": "H014,H013,H006,H025,H026,H031,H030,H005,H007,H023"
+}
