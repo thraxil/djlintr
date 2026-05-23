@@ -1152,17 +1152,33 @@ fn format_tag(
         }
     }
 
-    // Track the django block depth at which each attribute lives so that
-    // the wrapping path can keep attributes inside {% if %}...{% endif %}
-    // on the same line (matching djlint's behavior).
+    // Track per-attribute metadata so the wrapping path can keep attributes
+    // inside {% if %}...{% endif %} on the same line and suppress spaces
+    // between template tags and their adjacent content (matching djlint).
     let mut attr_depth: Vec<usize> = Vec::new();
+    let mut attr_is_django: Vec<bool> = Vec::new();
+    // Whether there was whitespace filler between the previous attribute
+    // and this one in the original source.  Used by the wrapping path to
+    // decide whether to insert a space (e.g. `{% if x %}checked{% endif %}`
+    // has no filler, while `{% if x %} a="1" {% endif %}` does).
+    let mut attr_has_leading_filler: Vec<bool> = Vec::new();
     let attrs: Vec<String> = {
         let mut depth: usize = 0;
+        let mut last_match_end: usize = 0;
         attr_re
             .find_iter(content)
             .map(|m| {
+                let filler = &content[last_match_end..m.start()];
+                let has_filler = !filler.trim().is_empty()
+                    || filler.contains(' ')
+                    || filler.contains('\n')
+                    || filler.contains('\t');
+                attr_has_leading_filler.push(has_filler);
+                last_match_end = m.end();
+
                 let raw_attr = m.as_str();
                 let is_django_block = raw_attr.starts_with("{%");
+                attr_is_django.push(is_django_block);
                 if is_django_block {
                     let inner = raw_attr[2..raw_attr.len() - 2].trim();
                     let is_closing = inner.starts_with("end")
@@ -1288,8 +1304,13 @@ fn format_tag(
             formatted.push(' ');
         } else if attr_depth[idx] > 0 || attr_depth[idx.saturating_sub(1)] > attr_depth[idx] {
             // Inside a django block or closing a django block: stay on the
-            // same line, separated by a space (matching djlint's behavior).
-            formatted.push(' ');
+            // same line.  Only add a space if the original source had
+            // whitespace filler between these attributes (e.g.
+            // `{% if x %} a="1" {% endif %}` has filler, but
+            // `{% if x %}checked{% endif %}` does not).
+            if attr_has_leading_filler[idx] {
+                formatted.push(' ');
+            }
         } else {
             formatted.push('\n');
             formatted.push_str(&attr_indent);

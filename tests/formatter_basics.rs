@@ -71,6 +71,10 @@ use rstest::rstest;
     "<span>\n    Line one.\n    Line two.</span>",
     "<span>\n    Line one.\nLine two.</span>\n"
 )]
+#[case(
+    "<input type=\"checkbox\" class=\"toggle toggle-success\" autocomplete=\"off\" {% if flag %}checked{% endif %} />",
+    "<input type=\"checkbox\"\n       class=\"toggle toggle-success\"\n       autocomplete=\"off\"\n       {% if flag %}checked{% endif %} />\n"
+)]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
