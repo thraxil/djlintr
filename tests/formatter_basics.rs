@@ -58,3 +58,17 @@ fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let output = format(&config, source);
     assert_eq!(output, expected);
 }
+
+/// When an inline closing tag appears mid-line with trailing text, the
+/// continuation indent should be preserved for subsequent sibling elements.
+/// djlint only unindents for closing tags at the start or end of a line.
+#[test]
+fn test_inline_close_midline_preserves_indent() {
+    let source =
+        "<td><a href=\"url\"><b>name1\nname2</b></a> description\n{% if cond %}\n{% for item in items %}\n<a href=\"url2\">{{ item }}</a>\n{% endfor %}\n{% endif %}\n</td>";
+    let expected =
+        "<td>\n    <a href=\"url\"><b>name1\n        name2</b></a> description\n        {% if cond %}\n            {% for item in items %}<a href=\"url2\">{{ item }}</a>{% endfor %}\n        {% endif %}\n    </td>\n";
+    let config = Config::default();
+    let output = format(&config, source);
+    assert_eq!(output, expected);
+}

@@ -372,15 +372,29 @@ impl<'a> Formatter<'a> {
                 let tag_was_wrapped = popped.map(|(_, _, tw, _)| tw).unwrap_or(false);
                 let was_inline_mid_line = popped.map(|(_, _, _, ml)| ml).unwrap_or(false);
 
+                // djlint only unindents for closing tags at the start or
+                // end of a (stripped) line. A closing inline tag that
+                // appears mid-line with inline content following it on the
+                // same source line should NOT decrement, because the
+                // continuation text keeps the visual indent level alive.
+                let closing_midline_with_trailing = is_inline_tag(name)
+                    && !self.at_start_of_line
+                    && self.pos + 1 < self.tokens.len()
+                    && {
+                        let next = &self.tokens[self.pos + 1];
+                        next.line() == token.ends_on_line() && is_inline_ish(next, self.config)
+                    };
+
                 // Decrement when the opening tag incremented, OR when it
                 // was an inline tag mid-line that skipped incrementing AND
                 // the closing tag is at the start of a line (meaning the
                 // content spanned multiple lines). When both open/close
                 // are on the same line, the net indent change is zero.
-                let should_decrement = was_incremented
+                let should_decrement = (was_incremented
                     || (was_inline_mid_line
                         && should_indent_children(name)
-                        && self.at_start_of_line);
+                        && self.at_start_of_line))
+                    && !closing_midline_with_trailing;
                 if should_decrement {
                     let already_decremented =
                         self.last_decrement_line == Some(self.output_line_index);
