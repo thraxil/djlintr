@@ -5,6 +5,7 @@ edition = "2021"
 license = "BSD-3-Clause"
 description = "A fast linter and formatter for Django templates written in Rust."
 repository = "https://github.com/thraxil/djlintr"
+publish = false
 
 [dependencies]
 regex = "1.10"
