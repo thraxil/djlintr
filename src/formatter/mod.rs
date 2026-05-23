@@ -444,12 +444,56 @@ impl<'a> Formatter<'a> {
             } else {
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
+                // Detect a "mismatched void": an opening tag with no
+                // matching close that is immediately followed by a closing
+                // tag of a *different* name (e.g. `<span ...></i>`).
+                // djlint's line-based indenter treats this as
+                // self-balancing (the unindent branch wins and the open
+                // tag never contributes to indent).  We mirror this by
+                // treating the pair as a void element for indent purposes:
+                // emit both tags inline, skip indent increment, and skip
+                // the parent_stack push so the mismatched close won't
+                // incorrectly pop a real parent.
+                let mismatched_void_close = if closing_idx.is_none() && !is_self_closing {
+                    // Check if the immediately next token is a closing tag
+                    // with a different name
+                    let next_pos = self.pos + 1;
+                    if next_pos < self.tokens.len() {
+                        if let Token::Tag {
+                            name: close_name,
+                            is_closing: true,
+                            ..
+                        } = &self.tokens[next_pos]
+                        {
+                            if close_name.to_lowercase() != name_lower {
+                                Some(next_pos)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let is_potentially_verbatim =
                     matches!(name_lower.as_str(), "style" | "script") && !is_self_closing;
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     trim_trailing_whitespace(&mut self.output);
                     self.push_newline();
+                }
+
+                // When a mismatched void is detected (e.g. `<span></i>`),
+                // djlint's line-based indenter sees the `</i>` at the end
+                // of the line and runs the unindent branch BEFORE placing
+                // the line.  Mirror this by decrementing before output.
+                if mismatched_void_close.is_some() && self.at_start_of_line {
+                    self.indent_level = self.indent_level.saturating_sub(1);
                 }
 
                 let was_at_start_of_line = self.at_start_of_line;
@@ -702,7 +746,43 @@ impl<'a> Formatter<'a> {
                     }
                 }
 
-                if !did_collapse {
+                if let (false, Some(close_pos)) = (did_collapse, mismatched_void_close) {
+                    // Mismatched void: emit the closing tag inline, no
+                    // indent change, no parent_stack push.  Advance pos
+                    // past the mismatched closer so it is not processed
+                    // again.
+                    if let Token::Tag {
+                        name: close_name, ..
+                    } = &self.tokens[close_pos]
+                    {
+                        self.push_content(&format!("</{}>", close_name));
+                    }
+                    self.pos = close_pos;
+                    // Decide whether to push a newline after the pair.
+                    let mut should_newline = true;
+                    if self.pos + 1 < self.tokens.len() {
+                        let next_token = &self.tokens[self.pos + 1];
+                        if next_token.line() == self.tokens[close_pos].ends_on_line()
+                            && is_inline_ish(next_token, self.config)
+                        {
+                            should_newline = false;
+                        }
+                    }
+                    if should_newline {
+                        trim_trailing_whitespace(&mut self.output);
+                        self.push_newline();
+                    } else {
+                        self.at_start_of_line = false;
+                    }
+                    // The mismatched close acts as an unindent in djlint.
+                    // Pop the most recent parent so the stack stays
+                    // balanced (the opening tag we just pushed never had
+                    // a matching close, and this mismatched close consumed
+                    // it). Don't decrement though — we already avoided
+                    // incrementing for this tag.
+                    // Note: we did NOT push to parent_stack for this tag,
+                    // so no pop is needed.
+                } else if !did_collapse {
                     let mut is_verbatim = false;
                     if is_potentially_verbatim {
                         is_verbatim = true;

@@ -59,6 +59,20 @@ fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     assert_eq!(output, expected);
 }
 
+/// A mismatched closing tag (e.g. `<span></i>`) should not increase the
+/// indent level. djlint treats a line with both an open and (mismatched)
+/// close as self-balancing — the unindent branch wins and the open tag
+/// never contributes to indent.
+#[test]
+fn test_mismatched_close_tag_no_indent() {
+    let source = "<div>\n<a href=\"foo\">\n<span class=\"glyphicon\"></i>\n</a>\n</div>";
+    let expected =
+        "<div>\n    <a href=\"foo\">\n    <span class=\"glyphicon\"></i>\n</a>\n</div>\n";
+    let config = Config::default();
+    let output = format(&config, source);
+    assert_eq!(output, expected);
+}
+
 /// When an inline closing tag appears mid-line with trailing text, the
 /// continuation indent should be preserved for subsequent sibling elements.
 /// djlint only unindents for closing tags at the start or end of a line.
