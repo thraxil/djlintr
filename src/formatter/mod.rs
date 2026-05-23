@@ -1248,6 +1248,39 @@ fn format_tag(
     };
     let content = &raw[start_pos..end_pos];
 
+    // Check if the attribute regex fully covers the content. If there are
+    // non-whitespace characters between (or after) matches the tag contains
+    // syntax the regex cannot parse (e.g. malformed template tags with
+    // unbalanced quotes). In that case, preserve the original tag text
+    // instead of reformatting, matching djlint's behavior of leaving
+    // unparseable tags alone.
+    {
+        let mut scan_end = 0;
+        let mut has_unparsed = false;
+        for m in attr_re.find_iter(content) {
+            if content[scan_end..m.start()]
+                .chars()
+                .any(|c| !c.is_ascii_whitespace())
+            {
+                has_unparsed = true;
+                break;
+            }
+            scan_end = m.end();
+        }
+        if !has_unparsed
+            && content[scan_end..]
+                .chars()
+                .any(|c| !c.is_ascii_whitespace())
+        {
+            has_unparsed = true;
+        }
+        if has_unparsed {
+            // Collapse internal whitespace but otherwise preserve as-is.
+            let collapsed = whitespace_re.replace_all(raw.trim(), " ");
+            return collapsed.to_string();
+        }
+    }
+
     let attrs: Vec<String> = attr_re
         .find_iter(content)
         .map(|m| {
