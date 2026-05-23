@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "djlintr"
+description = "A fast HTML template linter and formatter, ported from djlint to Rust."
+readme = "README.md"
+requires-python = ">=3.7"
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/thraxil/djlintr"
+Repository = "https://github.com/thraxil/djlintr"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "Cargo.toml"
+strip = true

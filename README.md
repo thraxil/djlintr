@@ -8,7 +8,15 @@ to be added in the future.
 
 ## Installation
 
-Just grab one of the binary release files from GitHub.
+You can install `djlintr` directly from PyPI using `pip` or `uv`:
+
+```bash
+pip install djlintr
+# or
+uv pip install djlintr
+```
+
+Alternatively, you can grab one of the binary release files from GitHub.
 
 Or, to install `djlintr` from source, ensure you have Rust installed and run:
 
