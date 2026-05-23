@@ -1,0 +1,6 @@
+<div id="x"
+     {% if y %}
+     hx-get="{% url 'app:view' object.pk %}"
+     hx-swap="outerHTML"
+     {% endif %}>
+</div>

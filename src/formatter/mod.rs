@@ -548,6 +548,21 @@ impl<'a> Formatter<'a> {
             })
         });
 
+        // Like has_newline_text, but only considers non-whitespace text.
+        // Whitespace-only text nodes that contain newlines (e.g. "\n    "
+        // between the opening tag and the first content token) don't count
+        // as "real" multi-line content. djlint uses this looser check when
+        // deciding whether to collapse block-level elements.
+        let has_content_newline = logical_elements.iter().any(|range| {
+            (range.start..range.end).any(|idx| {
+                if let Token::Text { raw, .. } = &self.tokens[idx] {
+                    raw.trim().contains('\n')
+                } else {
+                    false
+                }
+            })
+        });
+
         let non_whitespace_elements: Vec<_> = logical_elements
             .iter()
             .filter(|range| {
@@ -585,7 +600,9 @@ impl<'a> Formatter<'a> {
                         }
                     }
                 }
-                ((same_line && !has_newline_text) || non_whitespace_elements.len() == 1)
+                ((same_line && !has_newline_text)
+                    || non_whitespace_elements.len() == 1
+                    || !has_content_newline)
                     && !has_any_tag
             }
         } else if has_any_tag {
@@ -887,8 +904,21 @@ impl<'a> Formatter<'a> {
                             }
                         });
 
+                        // djlint never collapses {% block %}...{% endblock name %}
+                        // when the endblock tag carries the block name.
+                        let end_raw = self.tokens[j].raw();
+                        let end_has_name = {
+                            let inner = end_raw
+                                .trim_start_matches("{%")
+                                .trim_end_matches("%}")
+                                .trim();
+                            // e.g. "endblock title" has 2+ words
+                            inner.split_whitespace().count() > 1
+                        };
+
                         if condensed_len < self.config.max_line_length
                             && (all_strictly_inline || non_whitespace_elements.len() <= 1)
+                            && !end_has_name
                         {
                             if self.at_start_of_line {
                                 self.push_indent();
@@ -1065,14 +1095,46 @@ fn format_tag(
         }
     }
 
-    let attrs: Vec<String> = attr_re
-        .find_iter(content)
-        .map(|m| {
-            let normalized = normalize_django(m.as_str());
-            // Collapse internal whitespace (e.g., multi-line attribute values)
-            whitespace_re.replace_all(&normalized, " ").to_string()
-        })
-        .collect();
+    // Track the django block depth at which each attribute lives so that
+    // the wrapping path can keep attributes inside {% if %}...{% endif %}
+    // on the same line (matching djlint's behavior).
+    let mut attr_depth: Vec<usize> = Vec::new();
+    let attrs: Vec<String> = {
+        let mut depth: usize = 0;
+        attr_re
+            .find_iter(content)
+            .map(|m| {
+                let raw_attr = m.as_str();
+                let is_django_block = raw_attr.starts_with("{%");
+                if is_django_block {
+                    let inner = raw_attr[2..raw_attr.len() - 2].trim();
+                    let is_closing = inner.starts_with("end")
+                        || inner.starts_with("else")
+                        || inner.starts_with("elif");
+                    if is_closing {
+                        depth = depth.saturating_sub(1);
+                    }
+                    attr_depth.push(depth);
+                    if !is_closing {
+                        let is_opener = inner.starts_with("if")
+                            || inner.starts_with("for")
+                            || inner.starts_with("with")
+                            || inner.starts_with("block")
+                            || inner.starts_with("filter")
+                            || inner.starts_with("autoescape")
+                            || inner.starts_with("spaceless");
+                        if is_opener {
+                            depth += 1;
+                        }
+                    }
+                } else {
+                    attr_depth.push(depth);
+                }
+                let normalized = normalize_django(raw_attr);
+                whitespace_re.replace_all(&normalized, " ").to_string()
+            })
+            .collect()
+    };
 
     let mut last_end = 0;
     let mut prev_was_django_block = false;
@@ -1164,23 +1226,21 @@ fn format_tag(
     let mut formatted = format!("<{}", name);
     let attr_indent = " ".repeat(indent_level * config.indent + name.len() + 2);
 
-    let mut attrs_iter = attrs.into_iter();
-    if let Some(attr) = attrs_iter.next() {
-        formatted.push(' ');
-        if attr.starts_with("style=") {
-            formatted.push_str(&format_style_attribute(&attr, &attr_indent));
+    for (idx, attr) in attrs.iter().enumerate() {
+        if idx == 0 {
+            formatted.push(' ');
+        } else if attr_depth[idx] > 0 || attr_depth[idx.saturating_sub(1)] > attr_depth[idx] {
+            // Inside a django block or closing a django block: stay on the
+            // same line, separated by a space (matching djlint's behavior).
+            formatted.push(' ');
         } else {
-            formatted.push_str(&attr);
+            formatted.push('\n');
+            formatted.push_str(&attr_indent);
         }
-    }
-
-    for attr in attrs_iter {
-        formatted.push('\n');
-        formatted.push_str(&attr_indent);
         if attr.starts_with("style=") {
-            formatted.push_str(&format_style_attribute(&attr, &attr_indent));
+            formatted.push_str(&format_style_attribute(attr, &attr_indent));
         } else {
-            formatted.push_str(&attr);
+            formatted.push_str(attr);
         }
     }
 

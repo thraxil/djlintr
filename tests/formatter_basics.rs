@@ -36,6 +36,14 @@ use rstest::rstest;
     "{% block title %}<h1 class=\"foo\">Internal Server Error</h1>{% endblock %}",
     "{% block title %}<h1 class=\"foo\">Internal Server Error</h1>{% endblock %}\n"
 )]
+#[case(
+    "{% block title %}Content{% endblock title %}",
+    "{% block title %}\n    Content\n{% endblock title %}\n"
+)]
+#[case(
+    "{% block body_classes %}{% endblock body_classes %}",
+    "{% block body_classes %}\n{% endblock body_classes %}\n"
+)]
 #[case("<p>\n  line1\n  line2\n</p>", "<p>\n    line1\n    line2\n</p>\n")]
 #[case(
     "{% block content %}\nAn activation email has been sent.  Please check your email and click on the link to activate your account.\n{% endblock %}",
@@ -53,6 +61,12 @@ use rstest::rstest;
     "<link rel=\"stylesheet\" media=\"handheld\" href=\"{\" static \"css/handheld.css?v=2\" %}\">",
     "<link rel=\"stylesheet\" media=\"handheld\" href=\"{\" static \"css/handheld.css?v=2\" %}\">\n"
 )]
+#[case(
+    "<div id=\"x\"\n     {% if y %}\n     hx-get=\"{% url 'app:view' object.pk %}\"\n     hx-swap=\"outerHTML\"\n     {% endif %}>\n</div>",
+    "<div id=\"x\"\n     {% if y %} hx-get=\"{% url 'app:view' object.pk %}\" hx-swap=\"outerHTML\" {% endif %}></div>\n"
+)]
+#[case("<p>\n    {{ x }} text\n</p>", "<p>{{ x }} text</p>\n")]
+#[case("<p>\n    text1\n    text2\n</p>", "<p>\n    text1\n    text2\n</p>\n")]
 fn test_formatter_basics(#[case] source: &str, #[case] expected: &str) {
     let config = Config::default();
     let output = format(&config, source);
