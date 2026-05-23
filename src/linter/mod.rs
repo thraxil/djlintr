@@ -13,6 +13,12 @@ pub struct LintError {
     pub message: String,
 }
 
+struct IgnoredRange {
+    start: usize,
+    end: usize,
+    rules: Vec<String>,
+}
+
 static ALWAYS_IGNORED_RE: OnceLock<Regex> = OnceLock::new();
 static OFF_PATTERNS: OnceLock<Vec<(Regex, Regex)>> = OnceLock::new();
 static HTML_RE: OnceLock<Regex> = OnceLock::new();
@@ -35,24 +41,7 @@ static ENTITY_RE: OnceLock<Regex> = OnceLock::new();
 static SPACELESS_TAGS_RE: OnceLock<Regex> = OnceLock::new();
 static MALFORMED_TAG_RE: OnceLock<Regex> = OnceLock::new();
 
-pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
-    let mut errors = Vec::new();
-    let tokens: Vec<Token> = Tokenizer::new(source).collect();
-
-    let mut open_tags: Vec<(String, usize, usize, usize)> = Vec::new();
-    let single_quote_attr_re = SINGLE_QUOTE_ATTR_RE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)\b(?:class|id|src|width|height|alt|style|lang|title|srcset|media)='[^']*'"#,
-        )
-        .unwrap()
-    });
-
-    struct IgnoredRange {
-        start: usize,
-        end: usize,
-        rules: Vec<String>,
-    }
-
+fn build_ignored_ranges(source: &str) -> Vec<IgnoredRange> {
     let mut ignored_ranges: Vec<IgnoredRange> = Vec::new();
 
     let always_ignored_re = ALWAYS_IGNORED_RE.get_or_init(|| {
@@ -114,52 +103,52 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         }
     }
 
-    let is_ignored = |offset: usize, len: usize, code: Option<&str>| -> bool {
-        let end = offset + len;
-        ignored_ranges.iter().any(|ir| {
-            let matches_code = if ir.rules.is_empty() {
-                true
-            } else if let Some(c) = code {
-                ir.rules.iter().any(|r| r == c)
-            } else {
-                false
-            };
+    ignored_ranges
+}
 
-            if matches_code {
-                if ir.rules.is_empty() {
-                    // For general ignores (like comments/script), use the stricter check
-                    // that matches djlint's behavior: match must start BEFORE the end of the ignored block.
-                    (offset >= ir.start && offset < ir.end) || (end >= ir.start && end <= ir.end)
-                } else {
-                    // For djlint:off blocks, use overlap
-                    offset < ir.end && end > ir.start
-                }
+fn is_ignored(
+    ignored_ranges: &[IgnoredRange],
+    offset: usize,
+    len: usize,
+    code: Option<&str>,
+) -> bool {
+    let end = offset + len;
+    ignored_ranges.iter().any(|ir| {
+        let matches_code = if ir.rules.is_empty() {
+            true
+        } else if let Some(c) = code {
+            ir.rules.iter().any(|r| r == c)
+        } else {
+            false
+        };
+
+        if matches_code {
+            if ir.rules.is_empty() {
+                // For general ignores (like comments/script), use the stricter check
+                // that matches djlint's behavior: match must start BEFORE the end of the ignored block.
+                (offset >= ir.start && offset < ir.end) || (end >= ir.start && end <= ir.end)
             } else {
-                false
+                // For djlint:off blocks, use overlap
+                offset < ir.end && end > ir.start
             }
-        })
-    };
-
-    // Parity Hack: djlint regex for H030/H031 matches from the VERY FIRST <html> tag.
-    // If that tag is inside a comment, the whole match is ignored.
-    let mut html_is_ignored = false;
-    let html_re = HTML_RE.get_or_init(|| Regex::new(r#"(?i)<html"#).unwrap());
-    if let Some(m) = html_re.find(source) {
-        if is_ignored(m.start(), m.len(), None) {
-            html_is_ignored = true;
+        } else {
+            false
         }
-    }
+    })
+}
 
-    let masked_source = mask_template_tags(source);
-
-    // Batch 3 Regex
+fn check_h014_extra_blank_lines(
+    source: &str,
+    masked_source: &str,
+    errors: &mut Vec<LintError>,
+    ignored_ranges: &[IgnoredRange],
+) {
     let extra_blank_lines_re =
         EXTRA_BLANK_LINES_RE.get_or_init(|| Regex::new(r#"[^\n]{0,10}\n{3,}"#).unwrap());
 
-    // Run whole-source regexes (like extra blank lines)
-    for cap in extra_blank_lines_re.captures_iter(&masked_source) {
+    for cap in extra_blank_lines_re.captures_iter(masked_source) {
         let mat = cap.get(0).unwrap();
-        if is_ignored(mat.start(), mat.len(), Some("H014")) {
+        if is_ignored(ignored_ranges, mat.start(), mat.len(), Some("H014")) {
             continue;
         }
         let match_str = mat.as_str();
@@ -173,7 +162,13 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             message: "Found extra blank lines.".to_string(),
         });
     }
+}
 
+fn check_h037_duplicate_attrs(
+    source: &str,
+    errors: &mut Vec<LintError>,
+    ignored_ranges: &[IgnoredRange],
+) {
     // Parity Rule H037: Duplicate attribute
     // We simulate djlint's broken regex behavior which can jump across tags
     // due to nested quotes in template tags.
@@ -186,45 +181,6 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         )
         .unwrap()
     });
-
-    // Batch 1 Rules Regex
-    let unquoted_attr_re = UNQUOTED_ATTR_RE.get_or_init(|| {
-        Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap()
-    });
-    let space_around_eq_re = SPACE_AROUND_EQ_RE.get_or_init(|| {
-        Regex::new(r#"(?i)(?:\b|[a-z0-9:@\.-])[a-z0-9:@\.-]*\s+=|=\s+["'{a-z0-9]"#).unwrap()
-    });
-    let quote_re = QUOTE_RE.get_or_init(|| Regex::new(r#""[^"]*"|'[^']*'"#).unwrap());
-    let js_link_re = JS_LINK_RE
-        .get_or_init(|| Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap());
-    let inline_style_re =
-        INLINE_STYLE_RE.get_or_init(|| Regex::new(r#"(?i)\bstyle=["']"#).unwrap());
-    let http_link_re = HTTP_LINK_RE
-        .get_or_init(|| Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap());
-    let script_style_type_re = SCRIPT_STYLE_TYPE_RE
-        .get_or_init(|| Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap());
-    let empty_id_class_re =
-        EMPTY_ID_CLASS_RE.get_or_init(|| Regex::new(r#"(?i)\b(?:id|class)=['"]['"]"#).unwrap());
-
-    // Batch 2 State
-    let mut has_doctype = false;
-    let mut has_title = false;
-    let mut has_meta_description = false;
-    let mut has_meta_keywords = false;
-    let mut html_tag_pos: Option<(usize, usize, usize, String)> = None;
-    let form_action_ws_re = FORM_ACTION_WS_RE
-        .get_or_init(|| Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap());
-    let attr_name_re =
-        ATTR_NAME_RE.get_or_init(|| Regex::new(r#"(?i)\s([a-zA-Z0-9:-]+)="#).unwrap());
-    let method_re =
-        METHOD_RE.get_or_init(|| Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap());
-    let entity_re = ENTITY_RE
-        .get_or_init(|| Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap());
-
-    // Batch 3 Regex
-    let spaceless_tags_re = SPACELESS_TAGS_RE
-        .get_or_init(|| Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap());
-    let malformed_tag_re = MALFORMED_TAG_RE.get_or_init(|| Regex::new(r#"\{%[^}]*?\}%"#).unwrap());
 
     let is_in_html_tag = |pos: usize| -> Option<usize> {
         let prefix = &source[..pos];
@@ -249,7 +205,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     let mut last_flagged_tag_start = None;
     for mat in attr_start_re.find_iter(source) {
-        if is_ignored(mat.start(), mat.len(), Some("H037")) {
+        if is_ignored(ignored_ranges, mat.start(), mat.len(), Some("H037")) {
             continue;
         }
 
@@ -302,6 +258,109 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             }
         }
     }
+}
+
+fn filter_by_profile(errors: Vec<LintError>, config: &Config) -> Vec<LintError> {
+    let excluded_prefixes = match config.profile.to_lowercase().as_str() {
+        "all" => vec![],
+        "html" => vec!["D", "J", "T", "N", "M"],
+        "django" => vec!["J", "N", "M"],
+        "jinja" => vec!["D", "N", "M"],
+        "nunjucks" => vec!["D", "J", "M"],
+        "handlebars" => vec!["D", "J", "N"],
+        "golang" => vec!["D", "J", "N", "M"],
+        "angular" => vec!["D", "J", "H012", "H026", "H028"],
+        _ => vec![],
+    };
+
+    let default_false_rules = ["H017", "H035", "H036"];
+
+    // Filter ignored rules and profile exclusions
+    errors
+        .into_iter()
+        .filter(|e| {
+            let is_default_false = default_false_rules.contains(&e.code.as_str());
+            let is_included = config.include.contains(&e.code);
+            let is_ignored = config.ignore.contains(&e.code);
+            let is_profile_excluded = excluded_prefixes
+                .iter()
+                .any(|prefix| e.code.starts_with(prefix));
+
+            !is_ignored && !is_profile_excluded && (!is_default_false || is_included)
+        })
+        .collect()
+}
+
+pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
+    let mut errors = Vec::new();
+    let tokens: Vec<Token> = Tokenizer::new(source).collect();
+
+    let mut open_tags: Vec<(String, usize, usize, usize)> = Vec::new();
+    let single_quote_attr_re = SINGLE_QUOTE_ATTR_RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)\b(?:class|id|src|width|height|alt|style|lang|title|srcset|media)='[^']*'"#,
+        )
+        .unwrap()
+    });
+
+    let ignored_ranges = build_ignored_ranges(source);
+
+    // Parity Hack: djlint regex for H030/H031 matches from the VERY FIRST <html> tag.
+    // If that tag is inside a comment, the whole match is ignored.
+    let mut html_is_ignored = false;
+    let html_re = HTML_RE.get_or_init(|| Regex::new(r#"(?i)<html"#).unwrap());
+    if let Some(m) = html_re.find(source) {
+        if is_ignored(&ignored_ranges, m.start(), m.len(), None) {
+            html_is_ignored = true;
+        }
+    }
+
+    let masked_source = mask_template_tags(source);
+
+    // Batch 3 Regex: H014
+    check_h014_extra_blank_lines(source, &masked_source, &mut errors, &ignored_ranges);
+
+    // Parity Rule H037: Duplicate attribute
+    check_h037_duplicate_attrs(source, &mut errors, &ignored_ranges);
+
+    // Batch 1 Rules Regex
+    let unquoted_attr_re = UNQUOTED_ATTR_RE.get_or_init(|| {
+        Regex::new(r#"(?i)\s+(?:class|id|src|width|height|alt|style|lang|title|href|action|method|checked|required|srcset)=[^"'{>][^\s>]*"#).unwrap()
+    });
+    let space_around_eq_re = SPACE_AROUND_EQ_RE.get_or_init(|| {
+        Regex::new(r#"(?i)(?:\b|[a-z0-9:@\.-])[a-z0-9:@\.-]*\s+=|=\s+["'{a-z0-9]"#).unwrap()
+    });
+    let quote_re = QUOTE_RE.get_or_init(|| Regex::new(r#""[^"]*"|'[^']*'"#).unwrap());
+    let js_link_re = JS_LINK_RE
+        .get_or_init(|| Regex::new(r#"(?i)(?:href|action|data-url)=['"]javascript:"#).unwrap());
+    let inline_style_re =
+        INLINE_STYLE_RE.get_or_init(|| Regex::new(r#"(?i)\bstyle=["']"#).unwrap());
+    let http_link_re = HTTP_LINK_RE
+        .get_or_init(|| Regex::new(r#"(?i)(?:href|src|action|data-url)=['"]http://"#).unwrap());
+    let script_style_type_re = SCRIPT_STYLE_TYPE_RE
+        .get_or_init(|| Regex::new(r#"(?i)\btype=['"](?:text/css|text/javascript)['"]"#).unwrap());
+    let empty_id_class_re =
+        EMPTY_ID_CLASS_RE.get_or_init(|| Regex::new(r#"(?i)\b(?:id|class)=['"]['"]"#).unwrap());
+
+    // Batch 2 State
+    let mut has_doctype = false;
+    let mut has_title = false;
+    let mut has_meta_description = false;
+    let mut has_meta_keywords = false;
+    let mut html_tag_pos: Option<(usize, usize, usize, String)> = None;
+    let form_action_ws_re = FORM_ACTION_WS_RE
+        .get_or_init(|| Regex::new(r#"(?i)\baction=(?:\"\s+[^\"]*\s+\"|'\s+[^']*\s+')"#).unwrap());
+    let attr_name_re =
+        ATTR_NAME_RE.get_or_init(|| Regex::new(r#"(?i)\s([a-zA-Z0-9:-]+)="#).unwrap());
+    let method_re =
+        METHOD_RE.get_or_init(|| Regex::new(r#"(?i)method=['"]([A-Z0-9]+)['"]"#).unwrap());
+    let entity_re = ENTITY_RE
+        .get_or_init(|| Regex::new(r#"&(?:[a-zA-Z0-9]+|#[0-9]+|#x[0-9a-fA-F]+);"#).unwrap());
+
+    // Batch 3 Regex
+    let spaceless_tags_re = SPACELESS_TAGS_RE
+        .get_or_init(|| Regex::new(r#"(?i)\b(?:class|id)=["']\s+\{%|%\}\s+["']"#).unwrap());
+    let malformed_tag_re = MALFORMED_TAG_RE.get_or_init(|| Regex::new(r#"\{%[^}]*?\}%"#).unwrap());
 
     let mut i = 0;
     while i < tokens.len() {
@@ -309,7 +368,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
         let token_offset = token.offset();
         let token_len = token.raw().len();
 
-        let token_is_ignored = is_ignored(token_offset, token_len, None);
+        let token_is_ignored = is_ignored(&ignored_ranges, token_offset, token_len, None);
 
         match token {
             Token::Doctype { .. } if !token_is_ignored => {
@@ -329,68 +388,16 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 let masked_raw = mask_template_tags(raw);
 
                 // Rule H009: Tag names should be lowercase
-                if !is_ignored(token_offset, token_len, Some("H009")) {
-                    let h009_tags = [
-                        "HTML",
-                        "BODY",
-                        "DIV",
-                        "P",
-                        "SPAN",
-                        "TABLE",
-                        "TR",
-                        "TD",
-                        "TH",
-                        "THEAD",
-                        "TBODY",
-                        "CODE",
-                        "UL",
-                        "OL",
-                        "LI",
-                        "H1",
-                        "H2",
-                        "H3",
-                        "H4",
-                        "H5",
-                        "H6",
-                        "A",
-                        "DD",
-                        "DT",
-                        "BLOCKQUOTE",
-                        "SELECT",
-                        "FORM",
-                        "FIELDSET",
-                        "OPTGROUP",
-                        "LEGEND",
-                        "LABEL",
-                        "HEADER",
-                        "CACHE",
-                        "MAIN",
-                        "ASIDE",
-                        "FOOTER",
-                        "SECTION",
-                        "NAME",
-                        "FIGURE",
-                        "FIGCAPTION",
-                        "VIDEO",
-                        "G",
-                        "SVG",
-                        "BUTTON",
-                        "PATH",
-                        "PICTURE",
-                        "SCRIPT",
-                        "STYLE",
-                        "DETAILS",
-                        "SUMMARY",
-                    ];
-                    if h009_tags.contains(name) {
-                        errors.push(LintError {
-                            code: "H009".to_string(),
-                            line: *line,
-                            column: *column,
-                            match_str: raw.to_string(),
-                            message: "Tag names should be lowercase.".to_string(),
-                        });
-                    }
+                if !is_ignored(&ignored_ranges, token_offset, token_len, Some("H009"))
+                    && crate::tags::H009_TAGS.contains(name)
+                {
+                    errors.push(LintError {
+                        code: "H009".to_string(),
+                        line: *line,
+                        column: *column,
+                        match_str: raw.to_string(),
+                        message: "Tag names should be lowercase.".to_string(),
+                    });
                 }
 
                 if *is_closing {
@@ -402,7 +409,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             break;
                         }
                     }
-                    if !found && !is_ignored(token_offset, token_len, Some("H025")) {
+                    if !found && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H025"))
+                    {
                         errors.push(LintError {
                             code: "H025".to_string(),
                             line: *line,
@@ -422,7 +430,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         && name_lower.len() == 2
                         && name_lower.chars().nth(1).unwrap().is_ascii_digit()
                         && i + 1 < tokens.len()
-                        && !is_ignored(token_offset, token_len, Some("H015"))
+                        && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H015"))
                     {
                         if let Token::Tag {
                             line: next_line,
@@ -449,7 +457,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             if !has_doctype
                                 && *line == 1
                                 && *column == 0
-                                && !is_ignored(token_offset, token_len, Some("H007"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset,
+                                    token_len,
+                                    Some("H007"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H007".to_string(),
@@ -488,7 +501,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                             // Rule H035: Meta tags should be self closing
                             if !raw.ends_with("/>")
-                                && !is_ignored(token_offset, token_len, Some("H035"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset,
+                                    token_len,
+                                    Some("H035"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H035".to_string(),
@@ -504,7 +522,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         if crate::is_void_element(&name_lower)
                             && name_lower != "meta"
                             && !raw.ends_with("/>")
-                            && !is_ignored(token_offset, token_len, Some("H017"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H017"))
                         {
                             errors.push(LintError {
                                 code: "H017".to_string(),
@@ -520,7 +538,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             && !crate::is_void_element(&name_lower)
                             && !matches!(name_lower.as_str(), "td" | "li" | "th" | "dt" | "dd")
                             && !raw.contains(' ')
-                            && !is_ignored(token_offset, token_len, Some("H020"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H020"))
                         {
                             let mut next_tag_idx = i + 1;
                             while next_tag_idx < tokens.len() {
@@ -553,7 +571,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         // Rule H033: Form action whitespace
                         if name_lower == "form"
                             && form_action_ws_re.is_match(raw)
-                            && !is_ignored(token_offset, token_len, Some("H033"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H033"))
                         {
                             errors.push(LintError {
                                 code: "H033".to_string(),
@@ -566,7 +584,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule T028: Consider using spaceless tags inside attribute values
                         if let Some(m) = spaceless_tags_re.find(raw) {
-                            if !is_ignored(token_offset + m.start(), m.len(), Some("T028")) {
+                            if !is_ignored(
+                                &ignored_ranges,
+                                token_offset + m.start(),
+                                m.len(),
+                                Some("T028"),
+                            ) {
                                 errors.push(LintError {
                                     code: "T028".to_string(),
                                     line: *line,
@@ -578,15 +601,16 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
 
                         // Rule H010: Attribute names should be lowercase
-                        let h010_attrs = [
-                            "CLASS", "ID", "SRC", "WIDTH", "HEIGHT", "ALT", "STYLE", "LANG",
-                            "TITLE", "MEDIA", "SRCSET",
-                        ];
                         for cap in attr_name_re.captures_iter(raw) {
                             let mat = cap.get(0).unwrap();
                             let attr_name = cap.get(1).unwrap().as_str();
-                            if h010_attrs.contains(&attr_name)
-                                && !is_ignored(token_offset + mat.start(), mat.len(), Some("H010"))
+                            if crate::tags::H010_ATTRS.contains(&attr_name)
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset + mat.start(),
+                                    mat.len(),
+                                    Some("H010"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H010".to_string(),
@@ -601,7 +625,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         // Rule H005: lang attribute on html tag
                         if name_lower == "html"
                             && !raw_lower.contains("lang=")
-                            && !is_ignored(token_offset, token_len, Some("H005"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H005"))
                         {
                             errors.push(LintError {
                                 code: "H005".to_string(),
@@ -615,7 +639,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         // Rule H006 & H013: img height, width, and alt
                         if name_lower == "img" {
                             if (!raw_lower.contains("height=") || !raw_lower.contains("width="))
-                                && !is_ignored(token_offset, token_len, Some("H006"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset,
+                                    token_len,
+                                    Some("H006"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H006".to_string(),
@@ -627,7 +656,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                 });
                             }
                             if !raw_lower.contains("alt=")
-                                && !is_ignored(token_offset, token_len, Some("H013"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset,
+                                    token_len,
+                                    Some("H013"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H013".to_string(),
@@ -645,7 +679,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             // djlint ignores attributes that contain template tags
                             if !attr_content.contains("{{")
                                 && !attr_content.contains("{%")
-                                && !is_ignored(token_offset + m.start(), m.len(), Some("H008"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset + m.start(),
+                                    m.len(),
+                                    Some("H008"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H008".to_string(),
@@ -663,7 +702,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             // djlint ignores attributes that contain template tags
                             if !attr_content.contains("{{")
                                 && !attr_content.contains("{%")
-                                && !is_ignored(token_offset + m.start(), m.len(), Some("H011"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset + m.start(),
+                                    m.len(),
+                                    Some("H011"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H011".to_string(),
@@ -697,7 +741,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             // djlint ignores attributes that contain template tags
                             if !attr_content.contains("{{")
                                 && !attr_content.contains("{%")
-                                && !is_ignored(token_offset + m.start(), m.len(), Some("H012"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset + m.start(),
+                                    m.len(),
+                                    Some("H012"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H012".to_string(),
@@ -712,7 +761,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule H019: Replace 'javascript:abc()'
                         if let Some(m) = js_link_re.find(raw) {
-                            if !is_ignored(token_offset + m.start(), m.len(), Some("H019")) {
+                            if !is_ignored(
+                                &ignored_ranges,
+                                token_offset + m.start(),
+                                m.len(),
+                                Some("H019"),
+                            ) {
                                 errors.push(LintError {
                                     code: "H019".to_string(),
                                     line: *line,
@@ -730,7 +784,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             // djlint ignores styles that contain template tags
                             if !raw.contains("{{")
                                 && !raw.contains("{%")
-                                && !is_ignored(token_offset + m.start(), m.len(), Some("H021"))
+                                && !is_ignored(
+                                    &ignored_ranges,
+                                    token_offset + m.start(),
+                                    m.len(),
+                                    Some("H021"),
+                                )
                             {
                                 errors.push(LintError {
                                     code: "H021".to_string(),
@@ -744,7 +803,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule H022: Use HTTPS for external links
                         if let Some(m) = http_link_re.find(raw) {
-                            if !is_ignored(token_offset + m.start(), m.len(), Some("H022")) {
+                            if !is_ignored(
+                                &ignored_ranges,
+                                token_offset + m.start(),
+                                m.len(),
+                                Some("H022"),
+                            ) {
                                 errors.push(LintError {
                                     code: "H022".to_string(),
                                     line: *line,
@@ -758,7 +822,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         // Rule H024: Omit type on scripts and styles
                         if (name_lower == "script" || name_lower == "style")
                             && script_style_type_re.is_match(raw)
-                            && !is_ignored(token_offset, token_len, Some("H024"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H024"))
                         {
                             errors.push(LintError {
                                 code: "H024".to_string(),
@@ -771,7 +835,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule H026: Empty id and class tags can be removed
                         if let Some(m) = empty_id_class_re.find(raw) {
-                            if !is_ignored(token_offset + m.start(), m.len(), Some("H026")) {
+                            if !is_ignored(
+                                &ignored_ranges,
+                                token_offset + m.start(),
+                                m.len(),
+                                Some("H026"),
+                            ) {
                                 errors.push(LintError {
                                     code: "H026".to_string(),
                                     line: *line,
@@ -784,7 +853,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                         // Rule H029: Consider using lowercase form method values
                         if name_lower == "form"
-                            && !is_ignored(token_offset, token_len, Some("H029"))
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H029"))
                         {
                             if let Some(caps) = method_re.captures(raw) {
                                 let method_val = caps.get(1).unwrap().as_str();
@@ -802,7 +871,8 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         }
 
                         // Rule H036: Avoid use of <br> tags
-                        if name_lower == "br" && !is_ignored(token_offset, token_len, Some("H036"))
+                        if name_lower == "br"
+                            && !is_ignored(&ignored_ranges, token_offset, token_len, Some("H036"))
                         {
                             errors.push(LintError {
                                 code: "H036".to_string(),
@@ -817,7 +887,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                         if (name_lower == "link" || name_lower == "script" || name_lower == "img")
                             && (raw.contains("src=\"/static/") || raw.contains("href=\"/static/"))
                         {
-                            if !is_ignored(token_offset, token_len, Some("D004")) {
+                            if !is_ignored(&ignored_ranges, token_offset, token_len, Some("D004")) {
                                 errors.push(LintError {
                                     code: "D004".to_string(),
                                     line: *line,
@@ -826,7 +896,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                     message: "(Django) Static urls should follow {% static path/to/file %} pattern.".to_string(),
                                 });
                             }
-                            if !is_ignored(token_offset, token_len, Some("J004")) {
+                            if !is_ignored(&ignored_ranges, token_offset, token_len, Some("J004")) {
                                 errors.push(LintError {
                                     code: "J004".to_string(),
                                     line: *line,
@@ -844,7 +914,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             && !raw.contains("action=\"#")
                             && !raw.contains("{% url")
                         {
-                            if !is_ignored(token_offset, token_len, Some("D018")) {
+                            if !is_ignored(&ignored_ranges, token_offset, token_len, Some("D018")) {
                                 errors.push(LintError {
                                     code: "D018".to_string(),
                                     line: *line,
@@ -855,7 +925,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                                             .to_string(),
                                 });
                             }
-                            if !is_ignored(token_offset, token_len, Some("J018")) {
+                            if !is_ignored(&ignored_ranges, token_offset, token_len, Some("J018")) {
                                 errors.push(LintError {
                                     code: "J018".to_string(),
                                     line: *line,
@@ -891,7 +961,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                 if (!raw.starts_with(&format!("{} ", open_tag))
                     || !raw.ends_with(&format!(" {}", close_tag)))
-                    && !is_ignored(token_offset, token_len, Some("T001"))
+                    && !is_ignored(&ignored_ranges, token_offset, token_len, Some("T001"))
                 {
                     errors.push(LintError {
                         code: "T001".to_string(),
@@ -909,7 +979,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             || raw.contains("with")
                             || raw.contains("trans")
                             || raw.contains("now"))
-                        && !is_ignored(token_offset, token_len, Some("T002"))
+                        && !is_ignored(&ignored_ranges, token_offset, token_len, Some("T002"))
                     {
                         errors.push(LintError {
                             code: "T002".to_string(),
@@ -921,7 +991,9 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                     }
 
                     let inner = raw.trim_start_matches("{%").trim_end_matches("%}").trim();
-                    if inner == "endblock" && !is_ignored(token_offset, token_len, Some("T003")) {
+                    if inner == "endblock"
+                        && !is_ignored(&ignored_ranges, token_offset, token_len, Some("T003"))
+                    {
                         errors.push(LintError {
                             code: "T003".to_string(),
                             line: *line,
@@ -938,7 +1010,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 let single_quotes = raw.chars().filter(|&c| c == '\'').count();
                 let double_quotes = raw.chars().filter(|&c| c == '"').count();
                 if (single_quotes % 2 != 0 || double_quotes % 2 != 0)
-                    && !is_ignored(token_offset, token_len, Some("T027"))
+                    && !is_ignored(&ignored_ranges, token_offset, token_len, Some("T027"))
                 {
                     errors.push(LintError {
                         code: "T027".to_string(),
@@ -951,7 +1023,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
                 // Rule T034: Malformed tag
                 if let Some(m) = malformed_tag_re.find(raw) {
-                    if !is_ignored(token_offset + m.start(), m.len(), Some("T034")) {
+                    if !is_ignored(
+                        &ignored_ranges,
+                        token_offset + m.start(),
+                        m.len(),
+                        Some("T034"),
+                    ) {
                         errors.push(LintError {
                             code: "T034".to_string(),
                             line: *line,
@@ -984,8 +1061,12 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                             | "&emsp;"
                             | "&thinsp;"
                             | "&shy;"
-                    ) && !is_ignored(token_offset + m.start(), m.len(), Some("H023"))
-                    {
+                    ) && !is_ignored(
+                        &ignored_ranges,
+                        token_offset + m.start(),
+                        m.len(),
+                        Some("H023"),
+                    ) {
                         errors.push(LintError {
                             code: "H023".to_string(),
                             line: *line,
@@ -1005,7 +1086,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     if let Some((line, column, offset, match_str)) = html_tag_pos {
         let raw_len = match_str.len();
         if match_str != "IGNORED" && !html_is_ignored {
-            if !has_title && !is_ignored(offset, raw_len, Some("H016")) {
+            if !has_title && !is_ignored(&ignored_ranges, offset, raw_len, Some("H016")) {
                 errors.push(LintError {
                     code: "H016".to_string(),
                     line,
@@ -1016,7 +1097,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             }
             if !has_meta_description
                 && !match_str.contains("[endif]")
-                && !is_ignored(offset, raw_len, Some("H030"))
+                && !is_ignored(&ignored_ranges, offset, raw_len, Some("H030"))
             {
                 errors.push(LintError {
                     code: "H030".to_string(),
@@ -1028,7 +1109,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
             }
             if !has_meta_keywords
                 && !match_str.contains("[endif]")
-                && !is_ignored(offset, raw_len, Some("H031"))
+                && !is_ignored(&ignored_ranges, offset, raw_len, Some("H031"))
             {
                 errors.push(LintError {
                     code: "H031".to_string(),
@@ -1043,7 +1124,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 
     // After all tokens, if any open_tags left, they are orphans
     for (tag_name, line, column, offset) in open_tags {
-        if !is_ignored(offset, tag_name.len() + 2, Some("H025")) {
+        if !is_ignored(&ignored_ranges, offset, tag_name.len() + 2, Some("H025")) {
             errors.push(LintError {
                 code: "H025".to_string(),
                 line,
@@ -1057,34 +1138,7 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
     errors.sort_by_key(|e| (e.line, e.column));
 
     // Filter by profile
-    let excluded_prefixes = match config.profile.to_lowercase().as_str() {
-        "all" => vec![],
-        "html" => vec!["D", "J", "T", "N", "M"],
-        "django" => vec!["J", "N", "M"],
-        "jinja" => vec!["D", "N", "M"],
-        "nunjucks" => vec!["D", "J", "M"],
-        "handlebars" => vec!["D", "J", "N"],
-        "golang" => vec!["D", "J", "N", "M"],
-        "angular" => vec!["D", "J", "H012", "H026", "H028"],
-        _ => vec![],
-    };
-
-    let default_false_rules = ["H017", "H035", "H036"];
-
-    // Filter ignored rules and profile exclusions
-    errors
-        .into_iter()
-        .filter(|e| {
-            let is_default_false = default_false_rules.contains(&e.code.as_str());
-            let is_included = config.include.contains(&e.code);
-            let is_ignored = config.ignore.contains(&e.code);
-            let is_profile_excluded = excluded_prefixes
-                .iter()
-                .any(|prefix| e.code.starts_with(prefix));
-
-            !is_ignored && !is_profile_excluded && (!is_default_false || is_included)
-        })
-        .collect()
+    filter_by_profile(errors, config)
 }
 
 static DJANGO_BLOCK_RE: OnceLock<Regex> = OnceLock::new();

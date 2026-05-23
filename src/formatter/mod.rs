@@ -1,141 +1,13 @@
 pub mod tokenizer;
 
 use crate::config::Config;
+use crate::tags::{
+    is_condensable_tag, is_html_block_tag, is_inline_tag, is_structural_tag,
+    should_indent_children, should_wrap_attributes,
+};
 use regex::Regex;
 use std::sync::OnceLock;
 use tokenizer::{Token, Tokenizer};
-
-fn is_inline_tag(name: &str) -> bool {
-    let inline_tags = [
-        "a", "abbr", "acronym", "b", "bdo", "big", "cite", "code", "dfn", "em", "i", "img", "kbd",
-        "map", "object", "q", "samp", "small", "span", "strong", "sub", "sup", "tt", "var",
-        "title", "option", "script", "style", "time",
-    ];
-    inline_tags.contains(&name.to_lowercase().as_str())
-}
-
-fn is_html_block_tag(name: &str) -> bool {
-    let block_tags = [
-        "address",
-        "article",
-        "aside",
-        "blockquote",
-        "body",
-        "canvas",
-        "details",
-        "dd",
-        "div",
-        "dl",
-        "dt",
-        "fieldset",
-        "figcaption",
-        "figure",
-        "footer",
-        "form",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "head",
-        "header",
-        "hr",
-        "html",
-        "li",
-        "main",
-        "nav",
-        "noscript",
-        "ol",
-        "p",
-        "pre",
-        "section",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "ul",
-        "video",
-        "svg",
-    ];
-    block_tags.contains(&name.to_lowercase().as_str())
-}
-
-/// Tags that may be condensed onto a single line when their content is short
-/// enough. Mirrors the Python djlint `optional_single_line_html_tags` list.
-fn is_condensable_tag(name: &str) -> bool {
-    let tags = [
-        "a",
-        "article",
-        "body",
-        "button",
-        "div",
-        "dt",
-        "em",
-        "figcaption",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "head",
-        "icon",
-        "label",
-        "legend",
-        "li",
-        "link",
-        "option",
-        "p",
-        "path",
-        "script",
-        "select",
-        "small",
-        "span",
-        "strong",
-        "style",
-        "summary",
-        "td",
-        "th",
-        "title",
-        "tr",
-    ];
-    tags.contains(&name.to_lowercase().as_str())
-}
-
-fn is_structural_tag(name: &str) -> bool {
-    let structural_tags = [
-        "table", "tbody", "thead", "tfoot", "ul", "ol", "dl", "form", "dd",
-    ];
-    structural_tags.contains(&name.to_lowercase().as_str())
-}
-
-fn should_indent_children(name: &str) -> bool {
-    let no_indent_tags = [
-        "g",
-        "defs",
-        "clippath",
-        "mask",
-        "pattern",
-        "lineargradient",
-        "radialgradient",
-        "symbol",
-        "marker",
-        "script",
-        "style",
-    ];
-    !no_indent_tags.contains(&name.to_lowercase().as_str())
-}
-
-fn should_wrap_attributes(name: &str) -> bool {
-    let no_wrap_tags = [
-        "path", "circle", "rect", "line", "polyline", "polygon", "ellipse",
-    ];
-    !no_wrap_tags.contains(&name.to_lowercase().as_str())
-}
 
 struct Formatter<'a> {
     config: &'a Config,
@@ -200,6 +72,52 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Push indentation spaces for the current indent level.
+    fn push_indent(&mut self) {
+        self.output
+            .push_str(&" ".repeat(self.indent_level * self.config.indent));
+    }
+
+    /// Trim trailing whitespace from the output and push a newline.
+    fn trim_and_newline(&mut self) {
+        trim_trailing_whitespace(&mut self.output);
+        self.push_newline();
+    }
+
+    /// Check whether the next token continues on the same line (inline),
+    /// meaning we should NOT emit a newline after the current token.
+    /// Returns `true` if we should continue inline (i.e., skip the newline).
+    fn should_continue_inline(&self, token: &Token, guard: bool) -> bool {
+        if !guard || self.pos + 1 >= self.tokens.len() {
+            return false;
+        }
+        let next_token = &self.tokens[self.pos + 1];
+        if next_token.line() == token.ends_on_line()
+            && !token.raw().ends_with('\n')
+            && !token.raw().ends_with("\r\n")
+            && is_inline_ish(next_token, self.config)
+        {
+            return true;
+        }
+        if let Token::Text { raw: r, .. } = next_token {
+            if r.starts_with('\n') || r.starts_with("\r\n") {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Emit a newline unless the next token continues inline.
+    /// `guard` controls whether inline continuation is even possible
+    /// (e.g., `is_inline_tag(name)`). When false, always emits a newline.
+    fn emit_newline_or_continue(&mut self, token: &Token, guard: bool) {
+        if self.should_continue_inline(token, guard) {
+            self.at_start_of_line = false;
+        } else {
+            self.trim_and_newline();
+        }
+    }
+
     fn format(mut self) -> String {
         while self.pos < self.tokens.len() {
             self.process_token();
@@ -250,8 +168,7 @@ impl<'a> Formatter<'a> {
             self.push_content(raw);
             self.at_start_of_line = raw.ends_with('\n');
         } else {
-            self.output
-                .push_str(&" ".repeat(self.indent_level * self.config.indent));
+            self.push_indent();
             self.push_content("<!DOCTYPE html>\n");
             self.at_start_of_line = true;
         }
@@ -266,11 +183,9 @@ impl<'a> Formatter<'a> {
             let is_control = raw.contains("djlint:off") || raw.contains("djlint:on");
             if !is_control {
                 if !self.at_start_of_line {
-                    trim_trailing_whitespace(&mut self.output);
-                    self.push_newline();
+                    self.trim_and_newline();
                 }
-                self.output
-                    .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                self.push_indent();
                 self.push_content(raw.trim());
                 self.push_newline();
             } else {
@@ -318,8 +233,7 @@ impl<'a> Formatter<'a> {
                     }
 
                     if !self.at_start_of_line && !is_inline_tag(name) && !is_closing_verbatim {
-                        trim_trailing_whitespace(&mut self.output);
-                        self.push_newline();
+                        self.trim_and_newline();
                     }
                     if self.at_start_of_line {
                         // For closing verbatim tags (</script>, </style>),
@@ -329,35 +243,13 @@ impl<'a> Formatter<'a> {
                         if is_closing_verbatim {
                             trim_trailing_whitespace(&mut self.output);
                         }
-                        self.output
-                            .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                        self.push_indent();
                     }
                     self.push_content(&format!("</{}>", name));
-
-                    let mut should_newline = true;
-                    if (is_inline_tag(name) || is_closing_verbatim)
-                        && self.pos + 1 < self.tokens.len()
-                    {
-                        let next_token = &self.tokens[self.pos + 1];
-                        if next_token.line() == token.ends_on_line()
-                            && !token.raw().ends_with('\n')
-                            && !token.raw().ends_with("\r\n")
-                            && is_inline_ish(next_token, self.config)
-                        {
-                            should_newline = false;
-                        }
-                        if let Token::Text { raw: r, .. } = next_token {
-                            if r.starts_with('\n') || r.starts_with("\r\n") {
-                                should_newline = false;
-                            }
-                        }
-                    }
-
-                    if should_newline {
-                        self.push_newline();
-                    } else {
-                        self.at_start_of_line = false;
-                    }
+                    self.emit_newline_or_continue(
+                        token,
+                        is_inline_tag(name) || is_closing_verbatim,
+                    );
                     return;
                 } else {
                     self.push_content(raw);
@@ -410,37 +302,13 @@ impl<'a> Formatter<'a> {
                 // - the tag is inline but had wrapped attributes (meaning
                 //   children are on separate lines from the opening tag)
                 if !self.at_start_of_line && (!is_inline_tag(name) || tag_was_wrapped) {
-                    trim_trailing_whitespace(&mut self.output);
-                    self.push_newline();
+                    self.trim_and_newline();
                 }
                 if self.at_start_of_line {
-                    self.output
-                        .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                    self.push_indent();
                 }
                 self.push_content(&format!("</{}>", name));
-
-                let mut should_newline = true;
-                if is_inline_tag(name) && self.pos + 1 < self.tokens.len() {
-                    let next_token = &self.tokens[self.pos + 1];
-                    if next_token.line() == token.ends_on_line()
-                        && !token.raw().ends_with('\n')
-                        && !token.raw().ends_with("\r\n")
-                        && is_inline_ish(next_token, self.config)
-                    {
-                        should_newline = false;
-                    }
-                    if let Token::Text { raw: r, .. } = next_token {
-                        if r.starts_with('\n') || r.starts_with("\r\n") {
-                            should_newline = false;
-                        }
-                    }
-                }
-
-                if should_newline {
-                    self.push_newline();
-                } else {
-                    self.at_start_of_line = false;
-                }
+                self.emit_newline_or_continue(token, is_inline_tag(name));
             } else {
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
@@ -484,8 +352,7 @@ impl<'a> Formatter<'a> {
                     matches!(name_lower.as_str(), "style" | "script") && !is_self_closing;
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
-                    trim_trailing_whitespace(&mut self.output);
-                    self.push_newline();
+                    self.trim_and_newline();
                 }
 
                 // When a mismatched void is detected (e.g. `<span></i>`),
@@ -499,8 +366,7 @@ impl<'a> Formatter<'a> {
                 let was_at_start_of_line = self.at_start_of_line;
 
                 if self.at_start_of_line {
-                    self.output
-                        .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                    self.push_indent();
                 }
 
                 let formatted_tag =
@@ -510,234 +376,16 @@ impl<'a> Formatter<'a> {
                 self.at_start_of_line =
                     formatted_tag.ends_with('\n') || formatted_tag.ends_with("\r\n");
 
-                // Check if we can inline
-                let is_block_parent = is_html_block_tag(name);
-                let is_structural = is_structural_tag(name);
-                let mut did_collapse = false;
-                if !is_self_closing {
-                    if let Some(j) = closing_idx {
-                        let logical_elements = get_logical_elements(&children, &self.tokens);
-
-                        let all_inline_ish = logical_elements.iter().all(|range| {
-                            if range.len() == 1 {
-                                is_strictly_inline(&self.tokens[range.start], self.config, false)
-                            } else {
-                                // It's a tag pair. Inline if it's an inline tag and its content is inlinable.
-                                if let Token::Tag { name: n, .. } = &self.tokens[range.start] {
-                                    is_inline_tag(n)
-                                        && is_tag_range_inlinable(
-                                            range,
-                                            &self.tokens,
-                                            self.config,
-                                            false,
-                                        )
-                                } else {
-                                    false
-                                }
-                            }
-                        });
-
-                        let has_any_tag = logical_elements.iter().any(|range| {
-                            if range.len() > 1 {
-                                true
-                            } else {
-                                let token = &self.tokens[range.start];
-                                matches!(
-                                    token,
-                                    Token::Tag { .. }
-                                        | Token::Comment { .. }
-                                        | Token::DjangoComment { .. }
-                                )
-                            }
-                        });
-
-                        let has_newline_text = logical_elements.iter().any(|range| {
-                            // Check all tokens in the range for newlines,
-                            // not just standalone text tokens. This catches
-                            // newlines inside child tag content (e.g.,
-                            // <b>text\n  text</b>).
-                            (range.start..range.end).any(|idx| {
-                                if let Token::Text { raw, .. } = &self.tokens[idx] {
-                                    raw.contains('\n')
-                                } else {
-                                    false
-                                }
-                            })
-                        });
-
-                        let non_whitespace_elements: Vec<_> = logical_elements
-                            .iter()
-                            .filter(|range| {
-                                if range.len() == 1 {
-                                    if let Token::Text { raw, .. } = &self.tokens[range.start] {
-                                        !raw.trim().is_empty()
-                                    } else {
-                                        true
-                                    }
-                                } else {
-                                    true
-                                }
-                            })
-                            .collect();
-
-                        if all_inline_ish {
-                            let can_collapse = if is_structural {
-                                false
-                            } else if is_block_parent {
-                                if non_whitespace_elements.is_empty() && is_condensable_tag(name) {
-                                    // Empty condensable tag (only whitespace between
-                                    // open/close). Allow collapse; the projected length
-                                    // check below guards against lines that are too long.
-                                    true
-                                } else if non_whitespace_elements.is_empty() {
-                                    // Empty non-condensable tag (e.g. <header>, <footer>).
-                                    // Keep on separate lines.
-                                    false
-                                } else {
-                                    // Not empty. Check if all elements are on the same line as the start and end tags.
-                                    let mut same_line = self.tokens[j].line() == token.line();
-                                    if same_line {
-                                        for range in &logical_elements {
-                                            if self.tokens[range.start].line() != token.line()
-                                                || self.tokens[range.end - 1].ends_on_line()
-                                                    != token.line()
-                                            {
-                                                same_line = false;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    ((same_line && !has_newline_text)
-                                        || non_whitespace_elements.len() == 1)
-                                        && !has_any_tag
-                                }
-                            } else if has_any_tag {
-                                !has_newline_text
-                            } else {
-                                // No child tags. Block collapse only when
-                                // newlines separate multiple content pieces
-                                // (not just indentation around one piece).
-                                !has_newline_text || non_whitespace_elements.len() <= 1
-                            };
-
-                            if can_collapse {
-                                let is_wrapped = formatted_tag.contains('\n');
-                                if !is_wrapped || !has_any_tag {
-                                    // Collapse
-                                    let content = format_range_inlined_joined(
-                                        &logical_elements,
-                                        &self.tokens,
-                                        self.indent_level,
-                                        self.config,
-                                    );
-                                    let collapsed_content = content.trim();
-                                    let tag_last_line_len =
-                                        formatted_tag.split('\n').next_back().unwrap_or("").len();
-                                    let current_line_len = if formatted_tag.contains('\n') {
-                                        tag_last_line_len
-                                    } else {
-                                        (self.indent_level * self.config.indent) + tag_last_line_len
-                                    };
-                                    let projected_len =
-                                        current_line_len + collapsed_content.len() + name.len() + 3;
-
-                                    if (projected_len <= self.config.max_line_length
-                                        || is_potentially_verbatim)
-                                        && (logical_elements.is_empty()
-                                            && j == self.pos + 1
-                                            && self.tokens[j].line() == token.ends_on_line()
-                                            || !logical_elements.is_empty())
-                                    {
-                                        self.push_content(collapsed_content);
-                                        self.push_content(&format!("</{}>", name));
-                                        let mut should_newline = true;
-                                        if is_inline_tag(name) && j + 1 < self.tokens.len() {
-                                            let next_token = &self.tokens[j + 1];
-                                            if next_token.line() == token.ends_on_line()
-                                                && !token.raw().ends_with('\n')
-                                                && !token.raw().ends_with("\r\n")
-                                                && is_inline_ish(next_token, self.config)
-                                            {
-                                                should_newline = false;
-                                            }
-                                            if let Token::Text { raw: r, .. } = next_token {
-                                                if r.starts_with('\n') || r.starts_with("\r\n") {
-                                                    should_newline = false;
-                                                }
-                                            }
-                                        }
-                                        if should_newline {
-                                            trim_trailing_whitespace(&mut self.output);
-                                            self.push_newline();
-                                        } else {
-                                            self.at_start_of_line = false;
-                                        }
-                                        self.pos = j;
-                                        did_collapse = true;
-                                    }
-                                }
-                            }
-
-                            /*
-                                    if !did_collapse
-                                        && !is_structural
-                                        && !logical_elements.is_empty()
-                                        && !is_block_parent
-                                        && (!has_any_tag || !has_newline_text)
-                                        && !is_potentially_verbatim
-                                    {
-                                        let child_indent = if is_inline_tag(name) {
-                                            self.indent_level
-                                        } else {
-                                            self.indent_level + 1
-                                        };
-                                        let content = format_range_inlined_joined(
-                                            &logical_elements,
-                                            &self.tokens,
-                                            child_indent,
-                                            self.config,
-                                        );
-                                        let collapsed_content = content.trim();
-
-                                        trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
-                                        self.output
-                                            .push_str(&" ".repeat(child_indent * self.config.indent));
-                                        self.push_content(collapsed_content);
-                                        trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
-                                        self.output
-                                            .push_str(&" ".repeat(self.indent_level * self.config.indent));
-                                        self.push_content(&format!("</{}>", name));
-                                        let mut should_newline = true;
-                                        if is_inline_tag(name) && j + 1 < self.tokens.len() {
-                                            let next_token = &self.tokens[j + 1];
-                                            if next_token.line() == token.ends_on_line()
-                                                && !token.raw().ends_with('\n')
-                                                && !token.raw().ends_with("\r\n")
-                                                && is_inline_ish(next_token, self.config)
-                                            {
-                                                should_newline = false;
-                                            }
-                                            if let Token::Text { raw: r, .. } = next_token {
-                                                if r.starts_with('\n') || r.starts_with("\r\n") {
-                                                    should_newline = false;
-                                                }
-                                            }
-                                        }
-                                        if should_newline {
-                                            trim_trailing_whitespace(&mut self.output);
-                                    self.push_newline();
-                                        } else {
-                                            self.at_start_of_line = false;
-                                        }
-                                        self.pos = j;
-                                        did_collapse = true;
-                                    }
-                                    */
-                        }
-                    }
-                }
+                // Try to collapse children inline (e.g., <p>text</p>).
+                let did_collapse = !is_self_closing
+                    && self.try_collapse_html_tag(
+                        token,
+                        name,
+                        &children,
+                        closing_idx,
+                        &formatted_tag,
+                        is_potentially_verbatim,
+                    );
 
                 if let (false, Some(close_pos)) = (did_collapse, mismatched_void_close) {
                     // Mismatched void: emit the closing tag inline, no
@@ -752,20 +400,17 @@ impl<'a> Formatter<'a> {
                     }
                     self.pos = close_pos;
                     // Decide whether to push a newline after the pair.
-                    let mut should_newline = true;
-                    if self.pos + 1 < self.tokens.len() {
+                    // Note: mismatched void uses a simplified inline check
+                    // (no ends_with('\n') guard since token is synthetic).
+                    let continue_inline = self.pos + 1 < self.tokens.len() && {
                         let next_token = &self.tokens[self.pos + 1];
-                        if next_token.line() == self.tokens[close_pos].ends_on_line()
+                        next_token.line() == self.tokens[close_pos].ends_on_line()
                             && is_inline_ish(next_token, self.config)
-                        {
-                            should_newline = false;
-                        }
-                    }
-                    if should_newline {
-                        trim_trailing_whitespace(&mut self.output);
-                        self.push_newline();
-                    } else {
+                    };
+                    if continue_inline {
                         self.at_start_of_line = false;
+                    } else {
+                        self.trim_and_newline();
                     }
                     // The mismatched close acts as an unindent in djlint.
                     // Pop the most recent parent so the stack stays
@@ -785,24 +430,12 @@ impl<'a> Formatter<'a> {
                     let tag_was_wrapped = formatted_tag.contains('\n');
 
                     if !is_verbatim {
-                        let mut should_newline = true;
-                        if !is_structural && !tag_was_wrapped && self.pos + 1 < self.tokens.len() {
-                            let next_token = &self.tokens[self.pos + 1];
-                            if next_token.line() == token.ends_on_line()
-                                && !token.raw().ends_with('\n')
-                                && !token.raw().ends_with("\r\n")
-                                && is_inline_ish(next_token, self.config)
-                                && (is_inline_tag(name) || !is_html_block_tag(name))
-                            {
-                                should_newline = false;
-                            }
-                        }
-                        if should_newline {
-                            trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
-                        } else {
-                            self.at_start_of_line = false;
-                        }
+                        // Allow inline continuation only for non-structural,
+                        // non-wrapped tags that are inline or non-block.
+                        let inline_guard = !is_structural_tag(name)
+                            && !tag_was_wrapped
+                            && (is_inline_tag(name) || !is_html_block_tag(name));
+                        self.emit_newline_or_continue(token, inline_guard);
                     } else {
                         self.at_start_of_line =
                             formatted_tag.ends_with('\n') || formatted_tag.ends_with("\r\n");
@@ -857,6 +490,150 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Try to collapse an HTML tag's children inline onto a single line.
+    /// Returns `true` if the tag was collapsed (children inlined and closing
+    /// tag emitted). The caller should skip normal indent/parent-stack
+    /// handling when this returns `true`.
+    fn try_collapse_html_tag(
+        &mut self,
+        token: &Token,
+        name: &str,
+        children: &[usize],
+        closing_idx: Option<usize>,
+        formatted_tag: &str,
+        is_potentially_verbatim: bool,
+    ) -> bool {
+        let j = match closing_idx {
+            Some(j) => j,
+            None => return false,
+        };
+
+        let logical_elements = get_logical_elements(children, &self.tokens);
+
+        let all_inline_ish = logical_elements.iter().all(|range| {
+            if range.len() == 1 {
+                is_strictly_inline(&self.tokens[range.start], self.config, false)
+            } else {
+                if let Token::Tag { name: n, .. } = &self.tokens[range.start] {
+                    is_inline_tag(n)
+                        && is_tag_range_inlinable(range, &self.tokens, self.config, false)
+                } else {
+                    false
+                }
+            }
+        });
+
+        if !all_inline_ish {
+            return false;
+        }
+
+        let has_any_tag = logical_elements.iter().any(|range| {
+            if range.len() > 1 {
+                true
+            } else {
+                matches!(
+                    &self.tokens[range.start],
+                    Token::Tag { .. } | Token::Comment { .. } | Token::DjangoComment { .. }
+                )
+            }
+        });
+
+        let has_newline_text = logical_elements.iter().any(|range| {
+            (range.start..range.end).any(|idx| {
+                if let Token::Text { raw, .. } = &self.tokens[idx] {
+                    raw.contains('\n')
+                } else {
+                    false
+                }
+            })
+        });
+
+        let non_whitespace_elements: Vec<_> = logical_elements
+            .iter()
+            .filter(|range| {
+                if range.len() == 1 {
+                    if let Token::Text { raw, .. } = &self.tokens[range.start] {
+                        !raw.trim().is_empty()
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let is_block_parent = is_html_block_tag(name);
+        let is_structural = is_structural_tag(name);
+
+        let can_collapse = if is_structural {
+            false
+        } else if is_block_parent {
+            if non_whitespace_elements.is_empty() && is_condensable_tag(name) {
+                true
+            } else if non_whitespace_elements.is_empty() {
+                false
+            } else {
+                let mut same_line = self.tokens[j].line() == token.line();
+                if same_line {
+                    for range in &logical_elements {
+                        if self.tokens[range.start].line() != token.line()
+                            || self.tokens[range.end - 1].ends_on_line() != token.line()
+                        {
+                            same_line = false;
+                            break;
+                        }
+                    }
+                }
+                ((same_line && !has_newline_text) || non_whitespace_elements.len() == 1)
+                    && !has_any_tag
+            }
+        } else if has_any_tag {
+            !has_newline_text
+        } else {
+            !has_newline_text || non_whitespace_elements.len() <= 1
+        };
+
+        if !can_collapse {
+            return false;
+        }
+
+        let is_wrapped = formatted_tag.contains('\n');
+        if is_wrapped && has_any_tag {
+            return false;
+        }
+
+        let content = format_range_inlined_joined(
+            &logical_elements,
+            &self.tokens,
+            self.indent_level,
+            self.config,
+        );
+        let collapsed_content = content.trim();
+        let tag_last_line_len = formatted_tag.split('\n').next_back().unwrap_or("").len();
+        let current_line_len = if formatted_tag.contains('\n') {
+            tag_last_line_len
+        } else {
+            (self.indent_level * self.config.indent) + tag_last_line_len
+        };
+        let projected_len = current_line_len + collapsed_content.len() + name.len() + 3;
+
+        if (projected_len <= self.config.max_line_length || is_potentially_verbatim)
+            && (logical_elements.is_empty()
+                && j == self.pos + 1
+                && self.tokens[j].line() == token.ends_on_line()
+                || !logical_elements.is_empty())
+        {
+            self.push_content(collapsed_content);
+            self.push_content(&format!("</{}>", name));
+            self.pos = j;
+            self.emit_newline_or_continue(token, is_inline_tag(name));
+            true
+        } else {
+            false
+        }
+    }
+
     fn handle_text(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
@@ -874,23 +651,19 @@ impl<'a> Formatter<'a> {
                     if line.trim().is_empty() {
                         blank_lines += 1;
                         if blank_lines <= self.config.max_blank_lines {
-                            trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
+                            self.trim_and_newline();
                         }
                         continue;
                     }
                     blank_lines = 0;
 
                     if self.at_start_of_line {
-                        self.output
-                            .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                        self.push_indent();
                         self.push_content(line.trim_start());
                     } else if idx == 0 {
                         if raw.starts_with('\n') || raw.starts_with("\r\n") {
-                            trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
-                            self.output
-                                .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                            self.trim_and_newline();
+                            self.push_indent();
                             self.push_content(line.trim_start());
                         } else {
                             // Continuing inline. We want to preserve original leading spaces
@@ -901,35 +674,13 @@ impl<'a> Formatter<'a> {
                             self.push_content(line);
                         }
                     } else {
-                        trim_trailing_whitespace(&mut self.output);
-                        self.push_newline();
-                        self.output
-                            .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                        self.trim_and_newline();
+                        self.push_indent();
                         self.push_content(line.trim_start());
                     }
 
                     if is_last_line {
-                        let mut should_newline = true;
-                        if self.pos + 1 < self.tokens.len() {
-                            let next_token = &self.tokens[self.pos + 1];
-                            if next_token.line() == token.ends_on_line()
-                                && !token.raw().ends_with('\n')
-                                && !token.raw().ends_with("\r\n")
-                                && is_inline_ish(next_token, self.config)
-                            {
-                                should_newline = false;
-                            }
-                            if let Token::Text { raw: r, .. } = next_token {
-                                if r.starts_with('\n') || r.starts_with("\r\n") {
-                                    should_newline = false;
-                                }
-                            }
-                        }
-
-                        if should_newline {
-                            trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
-                        } else {
+                        if self.should_continue_inline(token, true) {
                             // Preserve original trailing space if any
                             let trailing_spaces =
                                 raw.chars().rev().take_while(|&c| c == ' ').count();
@@ -937,17 +688,17 @@ impl<'a> Formatter<'a> {
                                 self.output.push_str(&" ".repeat(trailing_spaces));
                             }
                             self.at_start_of_line = false;
+                        } else {
+                            self.trim_and_newline();
                         }
                     } else {
-                        trim_trailing_whitespace(&mut self.output);
-                        self.push_newline();
+                        self.trim_and_newline();
                     }
                 }
             } else if !raw.is_empty() {
                 if raw.contains('\n') {
                     if !self.at_start_of_line {
-                        trim_trailing_whitespace(&mut self.output);
-                        self.push_newline();
+                        self.trim_and_newline();
                     }
                     self.output_line_index += raw.chars().filter(|&c| c == '\n').count();
                     self.at_start_of_line = true;
@@ -965,34 +716,10 @@ impl<'a> Formatter<'a> {
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             if self.at_start_of_line {
-                self.output
-                    .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                self.push_indent();
             }
             self.push_content(&normalize_django(raw));
-
-            let mut should_newline = true;
-            if self.pos + 1 < self.tokens.len() {
-                let next_token = &self.tokens[self.pos + 1];
-                if next_token.line() == token.ends_on_line()
-                    && !token.raw().ends_with('\n')
-                    && !token.raw().ends_with("\r\n")
-                    && is_inline_ish(next_token, self.config)
-                {
-                    should_newline = false;
-                }
-                if let Token::Text { raw: r, .. } = next_token {
-                    if r.starts_with('\n') || r.starts_with("\r\n") {
-                        should_newline = false;
-                    }
-                }
-            }
-
-            if should_newline {
-                trim_trailing_whitespace(&mut self.output);
-                self.push_newline();
-            } else {
-                self.at_start_of_line = false;
-            }
+            self.emit_newline_or_continue(token, true);
         }
     }
 
@@ -1044,11 +771,7 @@ impl<'a> Formatter<'a> {
         } else {
             let tag_name = get_django_tag_name(raw).unwrap_or("");
             let is_closing = tag_name.starts_with("end");
-            let actual_tag_name = if let Some(stripped) = tag_name.strip_prefix("end") {
-                stripped
-            } else {
-                tag_name
-            };
+            let actual_tag_name = strip_end_prefix(tag_name);
             let is_block = is_block_tag(actual_tag_name, &self.config.custom_blocks);
             let is_reindent = is_reindent_tag(tag_name);
 
@@ -1066,8 +789,7 @@ impl<'a> Formatter<'a> {
             let mut did_collapse = false;
 
             if !self.at_start_of_line && (is_block || is_reindent) {
-                trim_trailing_whitespace(&mut self.output);
-                self.push_newline();
+                self.trim_and_newline();
             }
 
             if !is_closing && is_block {
@@ -1169,14 +891,12 @@ impl<'a> Formatter<'a> {
                             && (all_strictly_inline || non_whitespace_elements.len() <= 1)
                         {
                             if self.at_start_of_line {
-                                self.output
-                                    .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                                self.push_indent();
                             }
                             self.push_content(&normalized_start);
                             self.push_content(collapsed_content);
                             self.push_content(&normalized_end);
-                            trim_trailing_whitespace(&mut self.output);
-                            self.push_newline();
+                            self.trim_and_newline();
 
                             // Track unclosed HTML tags in the collapsed
                             // content. djlint's regex-based indent sees
@@ -1213,8 +933,7 @@ impl<'a> Formatter<'a> {
 
             if !did_collapse {
                 if self.at_start_of_line {
-                    self.output
-                        .push_str(&" ".repeat(self.indent_level * self.config.indent));
+                    self.push_indent();
                 }
                 self.push_content(&normalize_django(raw));
 
@@ -1222,29 +941,7 @@ impl<'a> Formatter<'a> {
                     self.formatting_enabled = false;
                 }
 
-                let mut should_newline = true;
-                if !is_block && !is_reindent && self.pos + 1 < self.tokens.len() {
-                    let next_token = &self.tokens[self.pos + 1];
-                    if next_token.line() == token.ends_on_line()
-                        && !token.raw().ends_with('\n')
-                        && !token.raw().ends_with("\r\n")
-                        && is_inline_ish(next_token, self.config)
-                    {
-                        should_newline = false;
-                    }
-                    if let Token::Text { raw: r, .. } = next_token {
-                        if r.starts_with('\n') || r.starts_with("\r\n") {
-                            should_newline = false;
-                        }
-                    }
-                }
-
-                if should_newline {
-                    trim_trailing_whitespace(&mut self.output);
-                    self.push_newline();
-                } else {
-                    self.at_start_of_line = false;
-                }
+                self.emit_newline_or_continue(token, !is_block && !is_reindent);
 
                 if (!is_closing && is_block) || is_reindent {
                     let (_, closing_idx) = get_children_info(self.pos, &self.tokens);
@@ -1547,6 +1244,12 @@ fn get_django_tag_name(raw: &str) -> Option<&str> {
     raw.trim_start_matches("{%").split_whitespace().next()
 }
 
+/// Strip the "end" prefix from a Django tag name (e.g., "endblock" -> "block").
+/// Returns the original name if it doesn't start with "end".
+fn strip_end_prefix(name: &str) -> &str {
+    name.strip_prefix("end").unwrap_or(name)
+}
+
 fn is_reindent_tag(name: &str) -> bool {
     matches!(name, "else" | "elif" | "empty")
 }
@@ -1562,13 +1265,7 @@ fn is_strictly_inline(token: &Token, config: &Config, is_parent_django: bool) ->
             if is_reindent_tag(tag_name) {
                 return false;
             }
-            let _is_closing = tag_name.starts_with("end");
-            let actual_tag_name = if let Some(stripped) = tag_name.strip_prefix("end") {
-                stripped
-            } else {
-                tag_name
-            };
-            !is_block_tag(actual_tag_name, &config.custom_blocks)
+            !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.trim().contains('\n'),
         Token::Tag { name, raw, .. } => {
@@ -1591,13 +1288,7 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
             if is_reindent_tag(tag_name) {
                 return false;
             }
-            let _is_closing = tag_name.starts_with("end");
-            let actual_tag_name = if let Some(stripped) = tag_name.strip_prefix("end") {
-                stripped
-            } else {
-                tag_name
-            };
-            !is_block_tag(actual_tag_name, &config.custom_blocks)
+            !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
         Token::Tag { name, .. } => is_inline_tag(name),
@@ -1607,35 +1298,7 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
 }
 
 fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
-    let name_lower = name.to_lowercase();
-    let actual_name = if let Some(stripped) = name_lower.strip_prefix("end") {
-        stripped
-    } else {
-        &name_lower
-    };
-
-    let blocks = [
-        "block",
-        "if",
-        "for",
-        "with",
-        "autoescape",
-        "filter",
-        "spaceless",
-        "cache",
-        "macro",
-        "call",
-        "set",
-        "localize",
-        "compress",
-        "comment",
-        "load",
-        "extends",
-    ];
-    blocks.contains(&actual_name)
-        || custom_blocks
-            .iter()
-            .any(|b| b.to_lowercase() == actual_name)
+    crate::tags::is_django_block_tag(name, custom_blocks)
 }
 
 fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usize>) {
