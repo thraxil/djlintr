@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-05-23
+
 ### Added
 
 - **Python Packaging**: Added `maturin` configuration and a PyPI release GitHub action. `djlintr` can now be installed as a Python package via `pip install djlintr` or `uv pip install djlintr`.
+
+### Fixed
+
+- **CLI**: Removed leftover debug prints from the formatter.
 
 ## [0.5.8] - 2026-05-16
 

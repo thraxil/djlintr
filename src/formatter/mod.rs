@@ -641,13 +641,6 @@ impl<'a> Formatter<'a> {
                                     let projected_len =
                                         current_line_len + collapsed_content.len() + name.len() + 3;
 
-                                    if true {
-                                        eprintln!(
-                                            "DEBUG: {} tag projected_len: {}, max: {}",
-                                            name, projected_len, self.config.max_line_length
-                                        );
-                                    }
-
                                     if (projected_len <= self.config.max_line_length
                                         || is_potentially_verbatim)
                                         && (logical_elements.is_empty()
@@ -1607,13 +1600,7 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
             !is_block_tag(actual_tag_name, &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
-        Token::Tag { name, .. } => {
-            let res = is_inline_tag(name);
-            if *name == "b" {
-                // eprintln!("DEBUG: is_inline_ish for b: {}", res);
-            }
-            res
-        }
+        Token::Tag { name, .. } => is_inline_tag(name),
         Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
         Token::Doctype { .. } => false,
     }
