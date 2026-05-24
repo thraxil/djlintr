@@ -1379,7 +1379,40 @@ fn format_style_attribute(attr: &str, indent: &str) -> String {
 }
 
 fn get_django_tag_name(raw: &str) -> Option<&str> {
-    raw.trim_start_matches("{%").split_whitespace().next()
+    let mut bytes = raw.as_bytes();
+    if bytes.starts_with(b"{%") {
+        bytes = &bytes[2..];
+    }
+    if bytes.starts_with(b"-") {
+        bytes = &bytes[1..];
+    }
+
+    // Find start of word
+    let mut start = 0;
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+
+    if start == bytes.len() {
+        return None;
+    }
+
+    // Find end of word
+    let mut end = start;
+    while end < bytes.len()
+        && !bytes[end].is_ascii_whitespace()
+        && bytes[end] != b'%'
+        && bytes[end] != b'-'
+    {
+        end += 1;
+    }
+
+    // SAFETY: We only advanced indices over ASCII characters (whitespace, '%', '-'),
+    // so `start` and `end` are valid UTF-8 boundaries within `raw`.
+    let start_idx = raw.len() - bytes.len() + start;
+    let end_idx = raw.len() - bytes.len() + end;
+
+    Some(&raw[start_idx..end_idx])
 }
 
 /// Strip the "end" prefix from a Django tag name (e.g., "endblock" -> "block").
@@ -1446,7 +1479,6 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
         Token::Tag { name, .. } => {
             let mut j = index + 1;
             let mut depth = 1;
-            let tag_name = name.to_lowercase();
             while j < tokens.len() {
                 match &tokens[j] {
                     Token::Tag {
@@ -1454,14 +1486,14 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
                         is_closing: false,
                         is_self_closing: false,
                         ..
-                    } if n.to_lowercase() == tag_name => {
+                    } if n.eq_ignore_ascii_case(name) => {
                         depth += 1;
                     }
                     Token::Tag {
                         name: n,
                         is_closing: true,
                         ..
-                    } if n.to_lowercase() == tag_name => {
+                    } if n.eq_ignore_ascii_case(name) => {
                         depth -= 1;
                         if depth == 0 {
                             return (children, Some(j));
@@ -1469,13 +1501,15 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
                     }
                     _ => {}
                 }
-                children.push(j);
+                if depth == 1 {
+                    children.push(j);
+                }
                 j += 1;
             }
+            (children, None)
         }
         Token::DjangoBlock { raw, .. } => {
             let tag_name = get_django_tag_name(raw).unwrap_or("");
-            let end_tag_name = format!("end{}", tag_name);
             let mut j = index + 1;
             let mut depth = 1;
             while j < tokens.len() {
@@ -1483,20 +1517,22 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
                     let name = get_django_tag_name(r).unwrap_or("");
                     if name == tag_name {
                         depth += 1;
-                    } else if name == end_tag_name {
+                    } else if name.starts_with("end") && &name[3..] == tag_name {
                         depth -= 1;
                         if depth == 0 {
                             return (children, Some(j));
                         }
                     }
                 }
-                children.push(j);
+                if depth == 1 {
+                    children.push(j);
+                }
                 j += 1;
             }
+            (children, None)
         }
-        _ => {}
+        _ => (children, None),
     }
-    (children, None)
 }
 
 fn get_logical_elements(children: &[usize], tokens: &[Token]) -> Vec<std::ops::Range<usize>> {
