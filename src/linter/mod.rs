@@ -231,22 +231,35 @@ fn check_h037_duplicate_attrs(
 
             // Check for duplicate: [^-:a-z]\1=[^>]*?>
             // Note: djlint regex requires it to eventually end with > within the same lookahead match.
-            let dup_pattern = format!(r#"(?i)^[^-:a-z]{}="#, regex::escape(&attr_name));
-            if let Some(m) = Regex::new(&dup_pattern).unwrap().find(remaining) {
-                let after_dup = &remaining[m.end()..];
-                if let Some(_tag_end_idx) = after_dup.find('>') {
-                    // Check if there are ANY non-ignored '>' between the duplicate and the tag end.
-                    // Actually, the djlint regex just takes the first '>' it finds.
-                    let line = source[..mat.start()].chars().filter(|&c| c == '\n').count() + 1;
-                    errors.push(LintError {
-                        code: "H037".to_string(),
-                        line,
-                        column: 0, // approximate
-                        match_str: attr_name.clone(),
-                        message: "Duplicate attribute found.".to_string(),
-                    });
-                    last_flagged_tag_start = Some(tag_start);
-                    break;
+            // Check for duplicate manually to avoid compiling a regex in a hot loop
+            if !remaining.is_empty() {
+                let first_char = remaining.chars().next().unwrap();
+                if !first_char.is_ascii_alphabetic() && first_char != '-' && first_char != ':' {
+                    let after_first = &remaining[first_char.len_utf8()..];
+                    if after_first.len() >= attr_name.len() {
+                        let maybe_attr = &after_first[..attr_name.len()];
+                        if maybe_attr.eq_ignore_ascii_case(&attr_name) {
+                            let after_attr = &after_first[attr_name.len()..];
+                            if let Some(stripped_attr) = after_attr.strip_prefix('=') {
+                                if let Some(_tag_end_idx) = stripped_attr.find('>') {
+                                    let line = source[..mat.start()]
+                                        .chars()
+                                        .filter(|&c| c == '\n')
+                                        .count()
+                                        + 1;
+                                    errors.push(LintError {
+                                        code: "H037".to_string(),
+                                        line,
+                                        column: 0, // approximate
+                                        match_str: attr_name.clone(),
+                                        message: "Duplicate attribute found.".to_string(),
+                                    });
+                                    last_flagged_tag_start = Some(tag_start);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
