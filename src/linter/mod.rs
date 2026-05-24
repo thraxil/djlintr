@@ -40,6 +40,7 @@ static METHOD_RE: OnceLock<Regex> = OnceLock::new();
 static ENTITY_RE: OnceLock<Regex> = OnceLock::new();
 static SPACELESS_TAGS_RE: OnceLock<Regex> = OnceLock::new();
 static MALFORMED_TAG_RE: OnceLock<Regex> = OnceLock::new();
+static OFF_BLOCK_RE: OnceLock<Regex> = OnceLock::new();
 
 fn build_ignored_ranges(source: &str) -> Vec<IgnoredRange> {
     let mut ignored_ranges: Vec<IgnoredRange> = Vec::new();
@@ -78,26 +79,47 @@ fn build_ignored_ranges(source: &str) -> Vec<IgnoredRange> {
         .collect()
     });
 
-    for (off_re, on_re) in off_patterns {
-        for off_match in off_re.find_iter(source) {
-            let caps = off_re.captures(off_match.as_str()).unwrap();
+    // Only run these expensive regexes if the source actually contains the directive
+    if source.contains("djlint:off") {
+        for (off_re, on_re) in off_patterns {
+            for off_match in off_re.find_iter(source) {
+                let caps = off_re.captures(off_match.as_str()).unwrap();
+                let rules_str = caps.get(1).unwrap().as_str();
+                let rules: Vec<String> = rules_str
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+
+                let search_start = off_match.end();
+                let end = if let Some(on_match) = on_re.find(&source[search_start..]) {
+                    search_start + on_match.end()
+                } else {
+                    source.len()
+                };
+
+                ignored_ranges.push(IgnoredRange {
+                    start: off_match.start(),
+                    end,
+                    rules,
+                });
+            }
+        }
+
+        let off_block_re = OFF_BLOCK_RE.get_or_init(|| {
+            Regex::new(r#"(?is)(?:<!--|\{#|\{\{!--)\s*djlint:off\s+(.*?)\s*(?:-->|#\}|--\}\})\s*(.*?)\s*(?:<!--|\{#|\{\{!--)\s*djlint:on\s*(?:-->|#\}|--\}\})"#).unwrap()
+        });
+        for m in off_block_re.find_iter(source) {
+            let caps = off_block_re.captures(m.as_str()).unwrap();
             let rules_str = caps.get(1).unwrap().as_str();
             let rules: Vec<String> = rules_str
                 .split(|c: char| c == ',' || c.is_whitespace())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string())
                 .collect();
-
-            let search_start = off_match.end();
-            let end = if let Some(on_match) = on_re.find(&source[search_start..]) {
-                search_start + on_match.end()
-            } else {
-                source.len()
-            };
-
             ignored_ranges.push(IgnoredRange {
-                start: off_match.start(),
-                end,
+                start: m.start(),
+                end: m.end(),
                 rules,
             });
         }
@@ -397,7 +419,15 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
                 offset,
             } => {
                 let name_lower = name.to_lowercase();
-                let raw_lower = raw.to_lowercase();
+                let raw_lower = if matches!(
+                    name_lower.as_str(),
+                    "html" | "img" | "area" | "input" | "meta"
+                ) {
+                    raw.to_lowercase()
+                } else {
+                    String::new()
+                };
+
                 let masked_raw = mask_template_tags(raw);
 
                 // Rule H009: Tag names should be lowercase
@@ -1157,7 +1187,11 @@ pub fn lint(config: &Config, source: &str) -> Vec<LintError> {
 static DJANGO_BLOCK_RE: OnceLock<Regex> = OnceLock::new();
 static DJANGO_VAR_RE: OnceLock<Regex> = OnceLock::new();
 
-fn mask_template_tags(raw: &str) -> String {
+fn mask_template_tags(raw: &str) -> std::borrow::Cow<'_, str> {
+    if !raw.contains("{%") && !raw.contains("{{") {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+
     let django_block_re = DJANGO_BLOCK_RE.get_or_init(|| Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap());
     let django_var_re = DJANGO_VAR_RE.get_or_init(|| Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap());
 
@@ -1176,5 +1210,5 @@ fn mask_template_tags(raw: &str) -> String {
         masked.replace_range(start..end, &"x".repeat(end - start));
     }
 
-    masked
+    std::borrow::Cow::Owned(masked)
 }

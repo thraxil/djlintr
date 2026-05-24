@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::sync::OnceLock;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token<'a> {
@@ -54,13 +55,14 @@ pub struct Tokenizer<'a> {
     pos: usize,
     line: usize,
     column: usize,
-    tag_re: Regex,
-    comment_re: Regex,
-    doctype_re: Regex,
-    django_var_re: Regex,
-    django_block_re: Regex,
-    django_comment_re: Regex,
 }
+
+static TAG_RE: OnceLock<Regex> = OnceLock::new();
+static COMMENT_RE: OnceLock<Regex> = OnceLock::new();
+static DOCTYPE_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_VAR_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_BLOCK_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_COMMENT_RE: OnceLock<Regex> = OnceLock::new();
 
 impl<'a> Tokenizer<'a> {
     pub fn new(source: &'a str) -> Self {
@@ -69,15 +71,6 @@ impl<'a> Tokenizer<'a> {
             pos: 0,
             line: 1,
             column: 0,
-            tag_re: Regex::new(
-                r#"(?i)^</?([a-z0-9:_]+)(?:"[^"\n]*"|'[^'\n]*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^>])*>"#,
-            )
-            .unwrap(),
-            comment_re: Regex::new(r#"(?i)^<!--[\s\S]*?-->"#).unwrap(),
-            doctype_re: Regex::new(r#"(?i)^<!DOCTYPE[^>]*>"#).unwrap(),
-            django_var_re: Regex::new(r#"^\{\{[\s\S]*?\}\}"#).unwrap(),
-            django_block_re: Regex::new(r#"^\{%[\s\S]*?%\}"#).unwrap(),
-            django_comment_re: Regex::new(r#"^\{#[\s\S]*?#\}"#).unwrap(),
         }
     }
 
@@ -108,7 +101,8 @@ impl<'a> Iterator for Tokenizer<'a> {
         let current_column = self.column;
         let current_offset = self.pos;
 
-        if let Some(m) = self.comment_re.find(remaining) {
+        let comment_re = COMMENT_RE.get_or_init(|| Regex::new(r#"(?i)^<!--[\s\S]*?-->"#).unwrap());
+        if let Some(m) = comment_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
             return Some(Token::Comment {
@@ -119,7 +113,9 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        if let Some(m) = self.django_var_re.find(remaining) {
+        let django_var_re =
+            DJANGO_VAR_RE.get_or_init(|| Regex::new(r#"^\{\{[\s\S]*?\}\}"#).unwrap());
+        if let Some(m) = django_var_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
             return Some(Token::DjangoVar {
@@ -130,7 +126,9 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        if let Some(m) = self.django_block_re.find(remaining) {
+        let django_block_re =
+            DJANGO_BLOCK_RE.get_or_init(|| Regex::new(r#"^\{%[\s\S]*?%\}"#).unwrap());
+        if let Some(m) = django_block_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
             return Some(Token::DjangoBlock {
@@ -141,7 +139,9 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        if let Some(m) = self.django_comment_re.find(remaining) {
+        let django_comment_re =
+            DJANGO_COMMENT_RE.get_or_init(|| Regex::new(r#"^\{#[\s\S]*?#\}"#).unwrap());
+        if let Some(m) = django_comment_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
             return Some(Token::DjangoComment {
@@ -152,7 +152,8 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        if let Some(m) = self.doctype_re.find(remaining) {
+        let doctype_re = DOCTYPE_RE.get_or_init(|| Regex::new(r#"(?i)^<!DOCTYPE[^>]*>"#).unwrap());
+        if let Some(m) = doctype_re.find(remaining) {
             let raw = m.as_str();
             self.update_pos(m.end());
             return Some(Token::Doctype {
@@ -163,8 +164,11 @@ impl<'a> Iterator for Tokenizer<'a> {
             });
         }
 
-        if let Some(m) = self.tag_re.find(remaining) {
-            let caps = self.tag_re.captures(remaining).unwrap();
+        let tag_re = TAG_RE.get_or_init(|| Regex::new(
+            r#"(?i)^</?([a-z0-9:_]+)(?:"[^"\n]*"|'[^'\n]*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^>])*>"#,
+        ).unwrap());
+        if let Some(m) = tag_re.find(remaining) {
+            let caps = tag_re.captures(remaining).unwrap();
             let name = caps.get(1).unwrap().as_str();
             let raw = m.as_str();
             let is_closing = raw.starts_with("</");
