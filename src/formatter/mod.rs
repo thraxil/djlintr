@@ -362,7 +362,10 @@ impl<'a> Formatter<'a> {
                 };
 
                 let is_potentially_verbatim =
-                    matches!(name_lower.as_str(), "style" | "script") && !is_self_closing;
+                    matches!(name_lower.as_str(), "style" | "script" | "pre" | "textarea")
+                        && !is_self_closing;
+                let is_ignored_block =
+                    matches!(name_lower.as_str(), "pre" | "textarea") && !is_self_closing;
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     self.trim_and_newline();
@@ -391,6 +394,7 @@ impl<'a> Formatter<'a> {
 
                 // Try to collapse children inline (e.g., <p>text</p>).
                 let did_collapse = !is_self_closing
+                    && !is_ignored_block
                     && self.try_collapse_html_tag(
                         token,
                         name,
@@ -648,11 +652,18 @@ impl<'a> Formatter<'a> {
         };
         let projected_len = current_line_len + collapsed_content.len() + name.len() + 3;
 
+        // djlint calculates combined length for condensation using regex:
+        // len(last_line_of_open_tag + content + close_tag)
+        // Which effectively ignores the indentation of the open tag
+        // if the open tag is a single line, and only considers the last line
+        // if it's multiline.
+        let djlint_condensed_len = tag_last_line_len + collapsed_content.len() + name.len() + 3;
+
         // djlint ignores max_line_length when collapsing block-level
         // elements whose content has no child tags (only text/template
-        // vars).  Match that behavior so deeply-nested paragraphs with
-        // short inline content still collapse.
-        let skip_line_length_check = is_block_parent && !has_any_tag;
+        // vars) IF the condensed length (ignoring indent) is <= max_line_length.
+        let skip_line_length_check =
+            is_block_parent && !has_any_tag && djlint_condensed_len <= self.config.max_line_length;
 
         if (projected_len <= self.config.max_line_length
             || is_potentially_verbatim

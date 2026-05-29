@@ -137,8 +137,13 @@ def run_custom_tests(temp_dir):
             print(f"WARNING: {src} has no .djlintrc, skipping")
             continue
 
-        html_files = [f for f in os.listdir(src) if f.endswith(".html")]
-        if not html_files:
+        has_html = False
+        for root_dir, _, files in os.walk(src):
+            if any(f.endswith(".html") for f in files):
+                has_html = True
+                break
+
+        if not has_html:
             print(f"WARNING: {src} has no .html files, skipping")
             continue
 
