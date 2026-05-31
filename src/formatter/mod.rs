@@ -1043,7 +1043,12 @@ impl<'a> Formatter<'a> {
 
                 if (!is_closing && is_block) || is_reindent {
                     let (_, closing_idx) = get_children_info(self.pos, &self.tokens);
-                    if closing_idx.is_some() || is_reindent {
+                    let should_indent = closing_idx.is_some()
+                        || is_reindent
+                        || (!self.config.require_closed_blocks
+                            && can_have_closing_tag(actual_tag_name, &self.config.custom_blocks));
+
+                    if should_indent {
                         let already_incremented =
                             self.last_increment_line == Some(self.output_line_index);
                         let mut incremented = false;
@@ -1481,6 +1486,36 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
 
 fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
     crate::tags::is_django_block_tag(name, custom_blocks)
+}
+
+fn can_have_closing_tag(name: &str, custom_blocks: &[String]) -> bool {
+    let name_lower = name.to_lowercase();
+    let actual_name = name_lower.strip_prefix("end").unwrap_or(&name_lower);
+
+    matches!(
+        actual_name,
+        "block"
+            | "if"
+            | "ifchanged"
+            | "for"
+            | "with"
+            | "autoescape"
+            | "filter"
+            | "spaceless"
+            | "cache"
+            | "macro"
+            | "call"
+            | "set"
+            | "localize"
+            | "compress"
+            | "comment"
+            | "verbatim"
+            | "language"
+            | "thumbnail"
+            | "raw"
+    ) || custom_blocks
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case(actual_name))
 }
 
 fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usize>) {

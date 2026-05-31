@@ -31,6 +31,8 @@ pub struct Config {
     pub max_blank_lines: usize,
     #[serde(default)]
     pub close_void_tags: bool,
+    #[serde(default)]
+    pub require_closed_blocks: bool,
 }
 
 fn deserialize_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
@@ -99,6 +101,7 @@ impl Default for Config {
             profile: "html".to_string(),
             max_blank_lines: 1,
             close_void_tags: false,
+            require_closed_blocks: false,
         }
     }
 }
