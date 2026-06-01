@@ -105,9 +105,19 @@ impl<'a> Formatter<'a> {
             return false;
         }
         let next_token = &self.tokens[self.pos + 1];
+
+        // If the text ends with a newline (ignoring trailing spaces/tabs),
+        // then the next token is on a new source line and not inline.
+        let ends_with_newline = match token {
+            Token::Text { raw, .. } => {
+                let trimmed = raw.trim_end_matches([' ', '\t']);
+                trimmed.ends_with('\n') || trimmed.ends_with("\r\n")
+            }
+            _ => token.raw().ends_with('\n') || token.raw().ends_with("\r\n"),
+        };
+
         if next_token.line() == token.ends_on_line()
-            && !token.raw().ends_with('\n')
-            && !token.raw().ends_with("\r\n")
+            && !ends_with_newline
             && is_inline_ish(next_token, self.config)
         {
             return true;
@@ -155,6 +165,12 @@ impl<'a> Formatter<'a> {
                 if raw.contains("djlint:on") {
                     self.formatting_enabled = true;
                     trim_trailing_whitespace(&mut self.output);
+                    self.at_start_of_line = self.output.ends_with('\n')
+                        || self.output.ends_with("\r\n")
+                        || self.output.is_empty();
+                    if self.at_start_of_line {
+                        self.push_indent();
+                    }
                     self.push_content(raw.trim());
                     self.push_newline();
                     return;
@@ -202,6 +218,10 @@ impl<'a> Formatter<'a> {
                 self.push_content(raw.trim());
                 self.push_newline();
             } else {
+                if !self.at_start_of_line {
+                    self.trim_and_newline();
+                }
+                self.push_indent();
                 self.push_content(raw.trim());
                 if raw.contains("djlint:off") {
                     self.formatting_enabled = false;
@@ -661,11 +681,11 @@ impl<'a> Formatter<'a> {
 
         // djlint ignores max_line_length when collapsing block-level
         // elements whose content has no child tags (only text/template
-        // vars) IF the condensed length (ignoring indent) is <= max_line_length.
+        // vars) IF the condensed length (ignoring indent) is < max_line_length.
         let skip_line_length_check =
-            is_block_parent && !has_any_tag && djlint_condensed_len <= self.config.max_line_length;
+            is_block_parent && !has_any_tag && djlint_condensed_len < self.config.max_line_length;
 
-        if (projected_len <= self.config.max_line_length
+        if (projected_len < self.config.max_line_length
             || is_potentially_verbatim
             || skip_line_length_check)
             && (logical_elements.is_empty()
@@ -715,7 +735,7 @@ impl<'a> Formatter<'a> {
                     && self
                         .parent_stack
                         .last()
-                        .is_some_and(|&(_, incremented, _, _)| incremented);
+                        .is_some_and(|&(_, incremented, tw, _)| incremented && !tw);
 
                 for (idx, line) in lines.iter().enumerate() {
                     let is_last_line = idx == lines.len() - 1;
@@ -983,10 +1003,16 @@ impl<'a> Formatter<'a> {
                             .iter()
                             .any(|b| b.eq_ignore_ascii_case(actual_tag_name));
 
+                        let is_collapsible_django_block = matches!(
+                            actual_tag_name,
+                            "if" | "for" | "block" | "with" | "asynceach" | "asyncall"
+                        );
+
                         if condensed_len < self.config.max_line_length
                             && (all_strictly_inline || non_whitespace_elements.len() <= 1)
                             && !end_has_name
                             && !is_custom_block
+                            && is_collapsible_django_block
                         {
                             if self.at_start_of_line {
                                 self.push_indent();

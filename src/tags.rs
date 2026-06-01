@@ -259,6 +259,7 @@ pub fn is_django_block_tag(name: &str, custom_blocks: &[String]) -> bool {
         actual_name,
         "block"
             | "if"
+            | "ifchanged"
             | "for"
             | "with"
             | "autoescape"
