@@ -185,7 +185,17 @@ pub fn should_indent_children(name: &str) -> bool {
 pub fn should_wrap_attributes(name: &str) -> bool {
     !matches!(
         name.to_lowercase().as_str(),
-        "path" | "circle" | "rect" | "line" | "polyline" | "polygon" | "ellipse"
+        "path"
+            | "circle"
+            | "rect"
+            | "line"
+            | "polyline"
+            | "polygon"
+            | "ellipse"
+            | "textarea"
+            | "pre"
+            | "script"
+            | "style"
     )
 }
 
