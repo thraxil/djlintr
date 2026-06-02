@@ -205,8 +205,6 @@ pub fn should_wrap_attributes(name: &str) -> bool {
             | "ellipse"
             | "textarea"
             | "pre"
-            | "script"
-            | "style"
             | "g"
             | "defs"
             | "clippath"

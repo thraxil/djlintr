@@ -21,3 +21,28 @@ fn test_complex_attribute_no_split() {
     let expected = "<button type=\"button\"\n        @click=\"exportModalOpen = true; $nextTick(() => $refs.exportModal.focus())\">\n";
     assert_eq!(output, expected);
 }
+
+#[test]
+fn test_script_tag_attribute_wrapping() {
+    let mut config = Config::default();
+    config.max_attribute_length = 20; // Force wrapping
+    config.max_line_length = 40; // Force wrapping
+    let input = "<script src=\"https://example.com/very/long/url/that/forces/wrap.js\" type=\"text/javascript\"></script>";
+    let output = format(&config, input);
+
+    let expected = "<script src=\"https://example.com/very/long/url/that/forces/wrap.js\"\n        type=\"text/javascript\"></script>\n";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_style_tag_attribute_wrapping() {
+    let mut config = Config::default();
+    config.max_attribute_length = 20; // Force wrapping
+    config.max_line_length = 40; // Force wrapping
+    let input = "<style type=\"text/css\" media=\"screen and (max-width: 600px)\"></style>";
+    let output = format(&config, input);
+
+    let expected =
+        "<style type=\"text/css\"\n       media=\"screen and (max-width: 600px)\"></style>\n";
+    assert_eq!(output, expected);
+}
