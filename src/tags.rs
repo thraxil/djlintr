@@ -108,6 +108,16 @@ pub fn is_html_block_tag(name: &str) -> bool {
             | "ul"
             | "video"
             | "svg"
+            | "g"
+            | "defs"
+            | "clippath"
+            | "mask"
+            | "pattern"
+            | "lineargradient"
+            | "radialgradient"
+            | "stop"
+            | "text"
+            | "tspan"
     )
 }
 
@@ -118,6 +128,7 @@ pub fn is_condensable_tag(name: &str) -> bool {
     matches!(
         name.to_lowercase().as_str(),
         "a" | "article"
+            | "b"
             | "body"
             | "button"
             | "div"
@@ -196,6 +207,16 @@ pub fn should_wrap_attributes(name: &str) -> bool {
             | "pre"
             | "script"
             | "style"
+            | "g"
+            | "defs"
+            | "clippath"
+            | "mask"
+            | "pattern"
+            | "lineargradient"
+            | "radialgradient"
+            | "stop"
+            | "text"
+            | "tspan"
     )
 }
 

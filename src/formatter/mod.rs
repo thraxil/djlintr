@@ -405,8 +405,14 @@ impl<'a> Formatter<'a> {
                     self.push_indent();
                 }
 
-                let formatted_tag =
-                    format_tag(name, raw, *is_self_closing, self.indent_level, self.config);
+                let formatted_tag = format_tag(
+                    name,
+                    raw,
+                    *is_self_closing,
+                    self.indent_level,
+                    self.config,
+                    is_ignored_block,
+                );
                 self.push_content(&formatted_tag);
 
                 self.at_start_of_line =
@@ -1140,6 +1146,7 @@ fn format_tag(
     is_self_closing: bool,
     indent_level: usize,
     config: &Config,
+    is_ignored_block: bool,
 ) -> String {
     let attr_re = ATTR_RE.get_or_init(|| {
         Regex::new(
@@ -1273,7 +1280,9 @@ fn format_tag(
                 || attr_content.starts_with("else")
                 || attr_content.starts_with("elif"));
 
-        if prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0) {
+        if !is_ignored_block
+            && (prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0))
+        {
             raw_final_content.push_str(filler.trim());
         } else {
             raw_final_content.push_str(filler);
@@ -1301,7 +1310,7 @@ fn format_tag(
         last_end = m.end();
     }
     let filler = &content[last_end..];
-    if prev_was_django_block {
+    if !is_ignored_block && prev_was_django_block {
         raw_final_content.push_str(filler.trim());
     } else {
         raw_final_content.push_str(filler);
@@ -1720,7 +1729,11 @@ fn is_tag_range_inlinable(
                 return false;
             }
 
-            let formatted = format_tag(name, raw, *is_self_closing, 0, config);
+            let is_ignored_block = matches!(
+                name.to_lowercase().as_str(),
+                "pre" | "textarea" | "script" | "style"
+            );
+            let formatted = format_tag(name, raw, *is_self_closing, 0, config, is_ignored_block);
             if formatted.contains('\n') {
                 return false;
             }
@@ -1783,6 +1796,10 @@ fn format_range_inlined(
                 is_self_closing,
                 ..
             } => {
+                let is_ignored_block = matches!(
+                    name.to_lowercase().as_str(),
+                    "pre" | "textarea" | "script" | "style"
+                );
                 if *is_closing {
                     result.push_str(&format!("</{}>", name));
                 } else {
@@ -1795,6 +1812,7 @@ fn format_range_inlined(
                                 *is_self_closing,
                                 indent_level,
                                 config,
+                                is_ignored_block,
                             ));
                             let sub_elements = get_logical_elements(&children, tokens);
                             let inner_content = format_range_inlined_joined(
@@ -1813,6 +1831,7 @@ fn format_range_inlined(
                                 *is_self_closing,
                                 indent_level,
                                 config,
+                                is_ignored_block,
                             ));
                         }
                     } else {
@@ -1822,6 +1841,7 @@ fn format_range_inlined(
                             *is_self_closing,
                             indent_level,
                             config,
+                            is_ignored_block,
                         ));
                     }
                 }
