@@ -1,0 +1,17 @@
+<div>
+    <div>
+        <div>
+            <div class="mb-4">
+                Label 1: <a class="font-bold"
+                   href="{% url 'app:detail' item.pk %}">{{ item.name }}</a>
+            </div>
+            <div class="mb-4">
+                Label 2: <a class="font-bold"
+                   href="{% url 'app:very_very_long_url_name_that_should_force_wrapping' item.other.pk %}">
+                {{ item.other_name }}
+                </a>
+            </div>
+            <div class="mb-4">A very long line of text that might trigger some wrapping differences between the two tools if it is long enough to exceed the line length limit.</div>
+        </div>
+    </div>
+</div>

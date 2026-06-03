@@ -432,11 +432,16 @@ impl<'a> Formatter<'a> {
                     self.push_indent();
                 }
 
+                // Match djlint's `leading_space + len("<tagname ")` formula:
+                // count the trailing spaces currently in the output (which
+                // is the whitespace immediately before the opening `<`).
+                let spaces_before_tag = self.output.chars().rev().take_while(|&c| c == ' ').count();
                 let formatted_tag = format_tag(
                     name,
                     raw,
                     *is_self_closing,
                     self.indent_level,
+                    spaces_before_tag,
                     self.config,
                     is_ignored_block,
                 );
@@ -1191,6 +1196,7 @@ fn format_tag(
     raw: &str,
     is_self_closing: bool,
     indent_level: usize,
+    spaces_before_tag: usize,
     config: &Config,
     is_ignored_block: bool,
 ) -> String {
@@ -1428,7 +1434,10 @@ fn format_tag(
     }
 
     let mut formatted = format!("<{}", name);
-    let attr_indent = " ".repeat(indent_level * config.indent + name.len() + 2);
+    // djlint computes attr_indent as (whitespace immediately before the `<`)
+    // + len("<tagname ").  `spaces_before_tag` is that leading whitespace
+    // count, computed by the caller from the current output state.
+    let attr_indent = " ".repeat(spaces_before_tag + name.len() + 2);
 
     for (idx, attr) in attrs.iter().enumerate() {
         if idx == 0 {
@@ -1824,7 +1833,7 @@ fn is_tag_range_inlinable(
                 name.to_lowercase().as_str(),
                 "pre" | "textarea" | "script" | "style"
             );
-            let formatted = format_tag(name, raw, *is_self_closing, 0, config, is_ignored_block);
+            let formatted = format_tag(name, raw, *is_self_closing, 0, 0, config, is_ignored_block);
             if formatted.contains('\n') {
                 return false;
             }
@@ -1902,6 +1911,7 @@ fn format_range_inlined(
                                 raw,
                                 *is_self_closing,
                                 indent_level,
+                                indent_level * config.indent,
                                 config,
                                 is_ignored_block,
                             ));
@@ -1921,6 +1931,7 @@ fn format_range_inlined(
                                 raw,
                                 *is_self_closing,
                                 indent_level,
+                                indent_level * config.indent,
                                 config,
                                 is_ignored_block,
                             ));
@@ -1931,6 +1942,7 @@ fn format_range_inlined(
                             raw,
                             *is_self_closing,
                             indent_level,
+                            indent_level * config.indent,
                             config,
                             is_ignored_block,
                         ));
