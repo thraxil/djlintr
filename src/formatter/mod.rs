@@ -719,26 +719,13 @@ impl<'a> Formatter<'a> {
         // if it's multiline.
         let djlint_condensed_len = tag_last_line_len + collapsed_content.len() + name.len() + 3;
 
-        // djlint ignores max_line_length when collapsing block-level
-        // elements whose content has no child tags (only text/template
-        // vars) IF the condensed length (ignoring indent) is < max_line_length.
+        // djlint ignores the outer indentation when deciding whether to
+        // collapse: it checks condensed length (tag last line + content +
+        // close tag) rather than the full projected line length.  Apply
+        // the same skip for any element whose content has no child HTML
+        // tags (only text/template vars/whitespace).
         let skip_line_length_check =
-            is_block_parent && !has_any_tag && djlint_condensed_len < self.config.max_line_length;
-
-        if name == "a" {
-            println!("try_collapse_html_tag <a>:");
-            println!("  projected_len: {}", projected_len);
-            println!("  djlint_condensed_len: {}", djlint_condensed_len);
-            println!("  max_line_length: {}", self.config.max_line_length);
-            println!("  skip_line_length_check: {}", skip_line_length_check);
-            println!("  can_collapse: {}", can_collapse);
-            println!("  is_wrapped: {}", is_wrapped);
-            println!("  has_any_tag: {}", has_any_tag);
-            println!(
-                "  logical_elements.is_empty(): {}",
-                logical_elements.is_empty()
-            );
-        }
+            !has_any_tag && djlint_condensed_len < self.config.max_line_length;
 
         if (projected_len < self.config.max_line_length
             || is_potentially_verbatim
