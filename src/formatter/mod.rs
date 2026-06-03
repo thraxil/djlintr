@@ -906,6 +906,7 @@ impl<'a> Formatter<'a> {
             let actual_tag_name = strip_end_prefix(tag_name);
             let is_block = is_block_tag(actual_tag_name, &self.config.custom_blocks);
             let is_reindent = is_reindent_tag(tag_name);
+            let is_line_break = is_line_break_tag(tag_name);
 
             if (is_closing && is_block) || is_reindent {
                 self.parent_stack.pop();
@@ -920,7 +921,7 @@ impl<'a> Formatter<'a> {
             // Check if we can inline
             let mut did_collapse = false;
 
-            if !self.at_start_of_line && (is_block || is_reindent) {
+            if !self.at_start_of_line && (is_block || is_reindent || is_line_break) {
                 self.trim_and_newline();
             }
 
@@ -1100,7 +1101,7 @@ impl<'a> Formatter<'a> {
                     self.formatting_enabled = false;
                 }
 
-                self.emit_newline_or_continue(token, !is_block && !is_reindent);
+                self.emit_newline_or_continue(token, !is_block && !is_reindent && !is_line_break);
 
                 if (!is_closing && is_block) || is_reindent {
                     let (_, closing_idx) = get_children_info(self.pos, &self.tokens);
@@ -1133,6 +1134,8 @@ pub fn format(config: &Config, source: &str) -> String {
 
 static VAR_RE: OnceLock<Regex> = OnceLock::new();
 static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_ATTR_AFTER_RE: OnceLock<Regex> = OnceLock::new();
+static DJANGO_ATTR_BEFORE_RE: OnceLock<Regex> = OnceLock::new();
 
 fn normalize_django(raw: &str) -> String {
     let var_re = VAR_RE.get_or_init(|| Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap());
@@ -1166,7 +1169,6 @@ fn trim_trailing_whitespace(s: &mut String) {
     s.truncate(current_trimmed.len());
 }
 
-static ATTR_RE: OnceLock<Regex> = OnceLock::new();
 static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
 
 fn format_tag(
@@ -1177,12 +1179,16 @@ fn format_tag(
     config: &Config,
     is_ignored_block: bool,
 ) -> String {
-    let attr_re = ATTR_RE.get_or_init(|| {
-        Regex::new(
-            r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#,
-        )
-        .unwrap()
-    });
+    let attr_re_str = if config.better_attribute_parsing {
+        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#
+    } else {
+        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#
+    };
+
+    // In actual implementation we wouldn't want to recompile the regex
+    // every time. However, to match the config option and debug, we'll
+    // compile it here. Once fixed we can make it a static or put it in config.
+    let attr_re = Regex::new(attr_re_str).unwrap();
     let whitespace_re = WHITESPACE_RE.get_or_init(|| Regex::new(r#"\s+"#).unwrap());
 
     let start_pos = if raw.starts_with("</") {
@@ -1349,6 +1355,26 @@ fn format_tag(
     // This string preserves style attribute values as-is (including trailing
     // semicolons), matching djlint which only reformats style when wrapping.
     let raw_attrs_collapsed = whitespace_re.replace_all(&raw_final_content, " ");
+
+    // In non-better parsing mode the entire {% if %}...{% endif %} block is
+    // matched as a single attribute token, so spaces between the block
+    // delimiters and the enclosed HTML attributes survive whitespace collapse.
+    // Remove them here to match djlint's output. Skip for ignored blocks
+    // (textarea, pre) where attribute whitespace is left as-is.
+    let raw_attrs_collapsed = if !is_ignored_block {
+        let after_re =
+            DJANGO_ATTR_AFTER_RE.get_or_init(|| Regex::new(r"(%\}) ([a-zA-Z0-9_])").unwrap());
+        // Only remove space before closing blocks ({% end... %}, {% else %}, {% elif %})
+        // to avoid stripping the space before opening blocks like {% if a %} in
+        // `attr="v" {% if a %}`.
+        let before_re = DJANGO_ATTR_BEFORE_RE
+            .get_or_init(|| Regex::new(r#"([a-zA-Z0-9_"']) (\{%-?\s*(?:end|else|elif))"#).unwrap());
+        let s = after_re.replace_all(&raw_attrs_collapsed, "$1$2");
+        before_re.replace_all(&s, "$1$2").into_owned().into()
+    } else {
+        raw_attrs_collapsed
+    };
+
     let raw_attrs_len = raw_attrs_collapsed.trim().len();
 
     let total_line_len =
@@ -1539,6 +1565,9 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
             if is_reindent_tag(tag_name) {
                 return false;
             }
+            if is_line_break_tag(tag_name) {
+                return false;
+            }
             !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
@@ -1550,6 +1579,14 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
 
 fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
     crate::tags::is_django_block_tag(name, custom_blocks)
+}
+
+/// Template tags that always occupy their own line but do NOT open an
+/// indented block (no matching end-tag).  They are still collapsible by
+/// `try_collapse_html_tag` when they are the sole content of a short
+/// parent — matching djlint's two-phase expand-then-condense behaviour.
+fn is_line_break_tag(name: &str) -> bool {
+    matches!(name, "include")
 }
 
 fn can_have_closing_tag(name: &str, custom_blocks: &[String]) -> bool {

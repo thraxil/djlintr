@@ -33,6 +33,10 @@ pub struct Config {
     pub close_void_tags: bool,
     #[serde(default)]
     pub require_closed_blocks: bool,
+    #[serde(default)]
+    pub use_gitignore: bool,
+    #[serde(default)]
+    pub better_attribute_parsing: bool,
 }
 
 fn deserialize_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
@@ -102,6 +106,8 @@ impl Default for Config {
             max_blank_lines: 1,
             close_void_tags: false,
             require_closed_blocks: false,
+            use_gitignore: false,
+            better_attribute_parsing: false,
         }
     }
 }
