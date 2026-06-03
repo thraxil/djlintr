@@ -1280,7 +1280,17 @@ fn format_tag(
                             || inner.starts_with("filter")
                             || inner.starts_with("autoescape")
                             || inner.starts_with("spaceless");
-                        if is_opener {
+                        // When the non-better regex matches an entire
+                        // {% if %}...{% endif %} block as one token, the
+                        // raw attr already contains both opener and closer.
+                        // Don't increment depth in that case — the net
+                        // change is zero and subsequent attrs should still
+                        // get their own wrapped lines.
+                        let is_self_contained = raw_attr.contains("endif")
+                            || raw_attr.contains("endfor")
+                            || raw_attr.contains("endeach")
+                            || raw_attr.contains("endall");
+                        if is_opener && !is_self_contained {
                             depth += 1;
                         }
                     }
