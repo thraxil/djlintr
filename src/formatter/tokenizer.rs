@@ -165,7 +165,7 @@ impl<'a> Iterator for Tokenizer<'a> {
         }
 
         let tag_re = TAG_RE.get_or_init(|| Regex::new(
-            r#"(?i)^</?([a-z0-9:_-]+)(?:"[^"\n]*"|'[^'\n]*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^>])*>"#,
+            r#"(?i)^</?([a-z0-9:._-]+)(?:"[^"\n]*"|'[^'\n]*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^>])*>"#,
         ).unwrap());
         if let Some(m) = tag_re.find(remaining) {
             let caps = tag_re.captures(remaining).unwrap();
