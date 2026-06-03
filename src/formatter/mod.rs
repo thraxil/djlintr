@@ -1075,7 +1075,7 @@ impl<'a> Formatter<'a> {
 
                         let is_collapsible_django_block = matches!(
                             actual_tag_name,
-                            "if" | "for" | "block" | "with" | "asynceach" | "asyncall"
+                            "if" | "for" | "block" | "with" | "asynceach" | "asyncall" | "comment"
                         );
 
                         if condensed_len < self.config.max_line_length
