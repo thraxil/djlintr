@@ -293,6 +293,7 @@ impl<'a> Formatter<'a> {
 
             if *is_closing {
                 let popped = self.parent_stack.pop();
+                let popped_pos = popped.map(|(pos, _, _, _)| pos);
                 let was_incremented = popped.map(|(_, inc, _, _)| inc).unwrap_or(false);
                 let was_inline_mid_line = popped.map(|(_, _, _, ml)| ml).unwrap_or(false);
 
@@ -309,16 +310,30 @@ impl<'a> Formatter<'a> {
                         next.line() == token.ends_on_line() && is_inline_ish(next, self.config)
                     };
 
-                // Decrement when the opening tag incremented, OR when it
-                // was an inline tag mid-line that skipped incrementing AND
-                // the closing tag is at the start of a line (meaning the
-                // content spanned multiple lines). When both open/close
-                // are on the same line, the net indent change is zero.
-                let should_decrement = (was_incremented
-                    || (was_inline_mid_line
-                        && should_indent_children(name)
-                        && self.at_start_of_line))
-                    && !closing_midline_with_trailing;
+                // When an inline tag opens AND closes on the same source
+                // line (e.g. `<b class="long">Short</b> <i>…</i>` all on
+                // one line), the tag's indent increment is self-contained
+                // and must be reversed at the close — even when there is
+                // trailing inline content on the same line — otherwise the
+                // parent's closing tags end up over-indented.
+                //
+                // When open and close span different source lines, keep
+                // the existing closing_midline_with_trailing guard: djlint
+                // preserves the incremented level for sibling content that
+                // follows the closing tag on the same line.
+                let open_close_same_line = popped_pos
+                    .map(|pos| self.tokens[pos].line() == token.line())
+                    .unwrap_or(false);
+
+                let should_decrement = if open_close_same_line && was_incremented {
+                    true
+                } else {
+                    (was_incremented
+                        || (was_inline_mid_line
+                            && should_indent_children(name)
+                            && self.at_start_of_line))
+                        && !closing_midline_with_trailing
+                };
                 if should_decrement {
                     let already_decremented =
                         self.last_decrement_line == Some(self.output_line_index);
