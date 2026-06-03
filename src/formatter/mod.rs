@@ -408,6 +408,32 @@ impl<'a> Formatter<'a> {
                     None
                 };
 
+                // An "unclosed orphan" is an opening tag that has no matching
+                // close anywhere in the document AND whose next non-whitespace
+                // sibling is a closing tag of a different (parent) element.
+                // Example: `<circle>` inside `<svg>...</svg>` with no
+                // `</circle>`.  djlint's line-based indenter never increments
+                // for such tags because it never sees a matching unindent line.
+                // We mirror this by skipping the indent-stack push so the
+                // parent's closing tag correctly pops its own entry.
+                let is_unclosed_orphan = mismatched_void_close.is_none()
+                    && closing_idx.is_none()
+                    && !is_self_closing
+                    && {
+                        let mut np = self.pos + 1;
+                        while np < self.tokens.len() {
+                            match &self.tokens[np] {
+                                Token::Text { raw, .. } if raw.trim().is_empty() => np += 1,
+                                _ => break,
+                            }
+                        }
+                        matches!(
+                            self.tokens.get(np),
+                            Some(Token::Tag { name: cn, is_closing: true, .. })
+                                if cn.to_lowercase() != name_lower
+                        )
+                    };
+
                 let is_potentially_verbatim =
                     matches!(name_lower.as_str(), "style" | "script" | "pre" | "textarea")
                         && !is_self_closing;
@@ -537,6 +563,7 @@ impl<'a> Formatter<'a> {
                         && should_indent_children(name)
                         && !is_verbatim
                         && !inline_mid_line
+                        && !is_unclosed_orphan
                     {
                         // Skip dedup when:
                         // - we just pushed a newline (children on a new line)
@@ -554,7 +581,7 @@ impl<'a> Formatter<'a> {
                         }
                     }
 
-                    if !is_self_closing {
+                    if !is_self_closing && !is_unclosed_orphan {
                         self.parent_stack.push((
                             self.pos,
                             incremented,
