@@ -1,0 +1,13 @@
+<div class="nested-container-to-increase-indentation">
+    <div>
+        <div>
+            <div>
+                <!-- djlint wraps the content of the p tag when the line is long -->
+                <p>Based on the provided information, there are {{ vulnerabilities|length }} vulnerabilities found in the repository.</p>
+
+                <!-- djlint wraps the include tag when the line is long -->
+                <div>{% include "long/path/to/an/icon/template/icon.html" with size="w-6 h-6" extra_class="some-very-long-extra-class-name" %}</div>
+            </div>
+        </div>
+    </div>
+</div>

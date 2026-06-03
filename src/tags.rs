@@ -39,7 +39,6 @@ pub fn is_inline_tag(name: &str) -> bool {
             | "dfn"
             | "em"
             | "i"
-            | "img"
             | "kbd"
             | "map"
             | "object"
@@ -62,6 +61,9 @@ pub fn is_inline_tag(name: &str) -> bool {
 
 /// Block-level HTML elements that get their own lines in formatted output.
 pub fn is_html_block_tag(name: &str) -> bool {
+    if is_void_element(name) {
+        return true;
+    }
     matches!(
         name.to_lowercase().as_str(),
         "address"

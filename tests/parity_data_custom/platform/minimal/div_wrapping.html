@@ -1,0 +1,17 @@
+<!-- Reproduction 1: djlint wraps long include inside div, djlintr doesn't -->
+<div>
+    {% include "long/path/to/template/with/many/attributes/so/it/wraps/in/djlint.html" with var1="val1" var2="val2" var3="val3" %}
+</div>
+
+<!-- Reproduction 2: djlint wraps content of div when it's deeply nested and long, djlintr doesn't -->
+<div>
+    <div>
+        <div>
+            <div>
+                <div class="this-is-a-very-long-class-list-to-make-the-line-exceed-the-default-line-length-of-djlint-which-is-one-hundred-and-twenty-characters">
+                    {{ variable }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

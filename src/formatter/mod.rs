@@ -294,7 +294,6 @@ impl<'a> Formatter<'a> {
             if *is_closing {
                 let popped = self.parent_stack.pop();
                 let was_incremented = popped.map(|(_, inc, _, _)| inc).unwrap_or(false);
-                let tag_was_wrapped = popped.map(|(_, _, tw, _)| tw).unwrap_or(false);
                 let was_inline_mid_line = popped.map(|(_, _, _, ml)| ml).unwrap_or(false);
 
                 // djlint only unindents for closing tags at the start or
@@ -334,7 +333,20 @@ impl<'a> Formatter<'a> {
                 // - the tag is a block-level tag, OR
                 // - the tag is inline but had wrapped attributes (meaning
                 //   children are on separate lines from the opening tag)
-                if !self.at_start_of_line && (!is_inline_tag(name) || tag_was_wrapped) {
+                // Note: djlint preserves inline children on the same line if they
+                // didn't force a newline themselves, even if the opening tag wrapped.
+                // However, if the children DID force a newline, we should put the
+                // closing tag on its own line.
+                // But wait, if children forced a newline, at_start_of_line is true!
+                // So if we are NOT at the start of the line, the last child was inline.
+                // In Python djlint, if the last child was inline, the closing tag stays inline.
+                let force_newline = !is_inline_tag(name);
+
+                // If it's an inline tag whose attributes wrapped, and its last child
+                // was a block element (which is invalid HTML but possible), or it had
+                // block content, it would already be on a new line. But if the last child
+                // was inline, we should keep it inline to match Python djlint.
+                if !self.at_start_of_line && force_newline {
                     self.trim_and_newline();
                 }
                 if self.at_start_of_line {
@@ -475,8 +487,10 @@ impl<'a> Formatter<'a> {
                     if !is_verbatim {
                         // Allow inline continuation only for non-structural,
                         // non-wrapped tags that are inline or non-block.
+                        // However, inline tags like <a> should NOT be forced
+                        // to wrap their content just because their attributes wrapped.
                         let inline_guard = !is_structural_tag(name)
-                            && !tag_was_wrapped
+                            && (!tag_was_wrapped || is_inline_tag(name))
                             && (is_inline_tag(name) || !is_html_block_tag(name));
                         self.emit_newline_or_continue(token, inline_guard);
                     } else {
@@ -690,6 +704,21 @@ impl<'a> Formatter<'a> {
         // vars) IF the condensed length (ignoring indent) is < max_line_length.
         let skip_line_length_check =
             is_block_parent && !has_any_tag && djlint_condensed_len < self.config.max_line_length;
+
+        if name == "a" {
+            println!("try_collapse_html_tag <a>:");
+            println!("  projected_len: {}", projected_len);
+            println!("  djlint_condensed_len: {}", djlint_condensed_len);
+            println!("  max_line_length: {}", self.config.max_line_length);
+            println!("  skip_line_length_check: {}", skip_line_length_check);
+            println!("  can_collapse: {}", can_collapse);
+            println!("  is_wrapped: {}", is_wrapped);
+            println!("  has_any_tag: {}", has_any_tag);
+            println!(
+                "  logical_elements.is_empty(): {}",
+                logical_elements.is_empty()
+            );
+        }
 
         if (projected_len < self.config.max_line_length
             || is_potentially_verbatim

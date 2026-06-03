@@ -1,0 +1,9 @@
+<div attr1="some-id-value"
+     attr2="some-extremely-long-class-name-that-definitely-triggers-wrapping-of-the-content-to-a-new-line-in-djlint">
+    {% firstof var1 "fallback" %}
+</div>
+
+<div attr1="another-id"
+     attr2="another-extremely-long-class-name-that-definitely-triggers-wrapping-of-the-content-to-a-new-line-in-djlint">
+    {% include "some/template.html" with var=val %}
+</div>
