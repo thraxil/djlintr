@@ -1590,6 +1590,9 @@ fn is_strictly_inline(token: &Token, config: &Config, is_parent_django: bool) ->
             if is_reindent_tag(tag_name) {
                 return false;
             }
+            if is_django_block_self_closing(raw) {
+                return true;
+            }
             !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.trim().contains('\n'),
@@ -1635,6 +1638,17 @@ fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
 /// parent — matching djlint's two-phase expand-then-condense behaviour.
 fn is_line_break_tag(name: &str) -> bool {
     matches!(name, "include")
+}
+
+/// Returns true for Cotton-style self-closing block tags (ending with `/ %}`).
+/// These never open an indented block even when the tag name is in custom_blocks.
+fn is_django_block_self_closing(raw: &str) -> bool {
+    let s = raw
+        .trim_end_matches('}')
+        .trim_end_matches('%')
+        .trim_end_matches('-')
+        .trim_end_matches(' ');
+    s.ends_with('/')
 }
 
 fn can_have_closing_tag(name: &str, custom_blocks: &[String]) -> bool {
