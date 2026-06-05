@@ -764,6 +764,42 @@ impl<'a> Formatter<'a> {
         {
             self.push_content(collapsed_content);
             self.push_content(&format!("</{}>", name));
+
+            // Track indent leaked by Django block openers among the collapsed
+            // children.  djlint's two-phase expand-then-condense approach
+            // increments indent for every custom block opener it encounters
+            // during expansion; that increment persists even when the content
+            // is later condensed onto a single line.
+            let indent_delta: i32 = {
+                let tokens = &self.tokens;
+                let custom_blocks = &self.config.custom_blocks;
+                children
+                    .iter()
+                    .map(|&idx| {
+                        if let Token::DjangoBlock { raw, .. } = &tokens[idx] {
+                            let tag_name = get_django_tag_name(raw).unwrap_or("");
+                            let actual = strip_end_prefix(tag_name);
+                            if is_block_tag(actual, custom_blocks) {
+                                if tag_name.starts_with("end") {
+                                    -1i32
+                                } else {
+                                    1i32
+                                }
+                            } else {
+                                0i32
+                            }
+                        } else {
+                            0i32
+                        }
+                    })
+                    .sum()
+            };
+            if indent_delta > 0 {
+                self.indent_level += indent_delta as usize;
+            } else if indent_delta < 0 {
+                self.indent_level = self.indent_level.saturating_sub((-indent_delta) as usize);
+            }
+
             self.pos = j;
             self.emit_newline_or_continue(token, is_inline_tag(name));
             true

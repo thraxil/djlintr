@@ -1,11 +1,5 @@
-<a
-    href="#"
-    {% if true %}
-        attr1="val1"
-        {% if true %}attr2="val2"{% endif %}
-        {% if true %}attr3="val3"{% endif %}
-    {% endif %}
-    class="my-class"
->
-    Link
-</a>
+<a href="#"
+   {% if true %} attr1="val1" {% if true %}attr2="val2"{% endif %}
+   {% if true %}attr3="val3"{% endif %}
+   {% endif %}
+   class="my-class">Link</a>
