@@ -52,8 +52,6 @@ jobs:
           python-version: '3.12'
       - name: Install djlint
         run: make install-djlint
-      - name: Fetch test data
-        run: make fetch-test-data
       - name: Run parity comparison
         run: make compare-lint
       - name: Run format parity comparison
