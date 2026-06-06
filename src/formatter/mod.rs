@@ -712,7 +712,15 @@ impl<'a> Formatter<'a> {
         } else if has_any_tag {
             !has_newline_text
         } else {
-            !has_newline_text || non_whitespace_elements.len() <= 1
+            // For non-block elements whose only "content" is whitespace spanning
+            // multiple source lines (e.g. <circle>\n</circle>), apply the same
+            // condensable-tag gate that block elements use.  djlint only condenses
+            // tags that appear in optional_single_line_html_tags (is_condensable_tag).
+            if non_whitespace_elements.is_empty() && has_newline_text {
+                is_condensable_tag(name)
+            } else {
+                !has_newline_text || non_whitespace_elements.len() == 1
+            }
         };
 
         if !can_collapse {
