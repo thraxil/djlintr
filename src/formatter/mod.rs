@@ -704,9 +704,40 @@ impl<'a> Formatter<'a> {
                         }
                     }
                 }
-                ((same_line && !has_newline_text)
-                    || non_whitespace_elements.len() == 1
-                    || !has_content_newline)
+                // Determine whether all non-whitespace content tokens reside on
+                // the same source line.  This distinguishes:
+                //   <p>\n{{ x }} text\n</p>  — content on one line, collapsible
+                //   <li>{{ a }}:\n{{ b }}</li> — content spans lines, do NOT collapse
+                let all_nonws_same_line = {
+                    let tokens = &self.tokens;
+                    let mut first_line: Option<usize> = None;
+                    let mut ok = true;
+                    'check: for elem in &non_whitespace_elements {
+                        for tok in tokens.iter().take(elem.end).skip(elem.start) {
+                            if let Token::Text { raw, .. } = tok {
+                                if raw.trim().is_empty() {
+                                    continue;
+                                }
+                            }
+                            // Use only the start line — trailing \n in text
+                            // tokens would push ends_on_line past the content
+                            // line and give a false "multi-line" signal.
+                            let sl = tok.line();
+                            match first_line {
+                                None => {
+                                    first_line = Some(sl);
+                                }
+                                Some(fl) if sl != fl => {
+                                    ok = false;
+                                    break 'check;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    ok
+                };
+                ((same_line && !has_newline_text) || (!has_content_newline && all_nonws_same_line))
                     && !has_any_tag
             }
         } else if has_any_tag {

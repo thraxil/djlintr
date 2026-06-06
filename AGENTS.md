@@ -71,6 +71,7 @@ A key goal is parity with the original Python `djlint`. There is a specialized s
 3.  **Run parity comparison:**
     ```bash
     make compare-lint
+    make compare-reformat
     ```
     This script compares the output of `djlintr` against `djlint` on a set of templates.
 
