@@ -27,7 +27,7 @@ clean: ## Remove build artifacts
 
 venv: ## Create virtual environment
 	python3 -m venv venv
-	./venv/bin/pip install djlint
+	./venv/bin/pip install djlint==1.36.4
 
 install-djlint: venv ## Install python djlint in venv for parity testing
 
