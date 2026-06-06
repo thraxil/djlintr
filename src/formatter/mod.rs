@@ -928,6 +928,32 @@ impl<'a> Formatter<'a> {
     fn handle_django_block(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
+            // Check if this closes a verbatim Django block (e.g. {% endcomment %}).
+            // These are Django blocks pushed onto verbatim_tags, not HTML tags, so
+            // handle_tag's close logic never fires for them.
+            let django_verbatim_blocks = ["comment"];
+            let tag_name_for_close = get_django_tag_name(raw).unwrap_or("");
+            if let Some(actual) = tag_name_for_close.strip_prefix("end") {
+                if django_verbatim_blocks.contains(&actual)
+                    && self.verbatim_tags.last().map(String::as_str) == Some(actual)
+                {
+                    self.verbatim_tags.pop();
+                    // Only indent when content already ended on its own line.
+                    // For inline comments ({% comment %}text{% endcomment %})
+                    // the closing tag stays on the same line as the content.
+                    if self.at_start_of_line {
+                        // Verbatim content may leave trailing whitespace on the
+                        // current line (e.g. the source indentation before the
+                        // closing tag).  Strip it so our indent replaces it cleanly.
+                        trim_trailing_whitespace(&mut self.output);
+                        self.push_indent();
+                    }
+                    self.push_content(&normalize_django(raw));
+                    self.trim_and_newline();
+                    return;
+                }
+            }
+
             let is_script_or_style = self
                 .verbatim_tags
                 .last()
@@ -977,6 +1003,23 @@ impl<'a> Formatter<'a> {
             let is_block = is_block_tag(actual_tag_name, &self.config.custom_blocks);
             let is_reindent = is_reindent_tag(tag_name);
             let is_line_break = is_line_break_tag(tag_name);
+
+            // {% comment %} is verbatim — content is preserved as-is without
+            // indenting or reformatting, matching Python djlint's behavior.
+            if tag_name == "comment" {
+                if !self.at_start_of_line {
+                    self.trim_and_newline();
+                }
+                if self.at_start_of_line {
+                    self.push_indent();
+                }
+                self.push_content(&normalize_django(raw));
+                // Don't emit a trailing newline — the verbatim content starts
+                // with \n and provides its own line break.
+                self.at_start_of_line = false;
+                self.verbatim_tags.push("comment".to_string());
+                return;
+            }
 
             if (is_closing && is_block) || is_reindent {
                 self.parent_stack.pop();
@@ -1111,7 +1154,7 @@ impl<'a> Formatter<'a> {
 
                         let is_collapsible_django_block = matches!(
                             actual_tag_name,
-                            "if" | "for" | "block" | "with" | "asynceach" | "asyncall" | "comment"
+                            "if" | "for" | "block" | "with" | "asynceach" | "asyncall"
                         );
 
                         if condensed_len < self.config.max_line_length
