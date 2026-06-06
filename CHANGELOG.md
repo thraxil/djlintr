@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-06
+
+### Added
+
+- **Config**: Added `use_gitignore` and `better_attribute_parsing` configuration options.
+
+### Fixed
+
+- **Formatter**: Fixed all non-whitespace tokens so they start on the correct source line.
+- **Formatter**: Fixed collapsing of non-block elements containing only whitespace.
+- **Formatter**: Fixed closing of nested verbatim tags.
+- **Formatter**: Fixed leaked indent level after certain tag sequences.
+- **Formatter**: Improved handling of Django block self-closing tags.
+- **Formatter**: Fixed include expansion edge cases.
+- **Formatter**: Fixed SVG formatting issues.
+- **Formatter**: Fixed condensing logic incorrectly ignoring outer indentation.
+- **Formatter**: Fixed indentation of multiline attributes followed by long text content.
+- **Formatter**: Fixed indentation of long attribute lists.
+- **Formatter**: Fixed attribute wrapping in combination with include expansion.
+- **Formatter**: Preserved dot-namespaced custom element tag names (e.g. `my-lib.component`).
+- **Formatter**: Fixed attribute wrapping for `<a>` tag content and tags with inline children.
+- **Formatter**: Added `is_line_break` tag handling so line-break tags force a new line correctly.
+- **Formatter**: Fixed ignored-block opening detection (`is_ignored_block_opening`).
+- **Formatter**: Fixed indentation of self-closing tags.
+- **Formatter**: Fixed collapse of `<textarea>` content.
+- **Tags**: Added SVG structural tags (`g`, `defs`, `clipPath`, `mask`, `pattern`, `linearGradient`, `radialGradient`, `stop`, `text`, `tspan`) to the block tag set for correct formatting.
+
 ### Performance
 
 - **Tokenizer**: Wrapped all regular expressions in the Tokenizer inside `OnceLock` statics to prevent recompiling 6 regular expressions from scratch on every single tokenization pass. This resulted in a massive 50% performance improvement across both formatting and linting.
