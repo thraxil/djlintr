@@ -269,14 +269,18 @@ impl<'a> Formatter<'a> {
                         self.trim_and_newline();
                     }
                     if self.at_start_of_line {
-                        // For closing verbatim tags (</script>, </style>),
-                        // the verbatim content may have left whitespace
-                        // (tabs/spaces) on the current line. Trim it so
-                        // our space-based indent replaces it cleanly.
-                        if is_closing_verbatim {
-                            trim_trailing_whitespace(&mut self.output);
+                        // For </script> and </style>, trim source whitespace
+                        // and re-indent to the computed level. For </textarea>
+                        // and </pre>, the block is truly raw — djlint preserves
+                        // whatever indentation the source had before the closing
+                        // tag, so we leave the output whitespace untouched.
+                        let is_truly_verbatim = matches!(name_lower.as_str(), "pre" | "textarea");
+                        if !is_truly_verbatim {
+                            if is_closing_verbatim {
+                                trim_trailing_whitespace(&mut self.output);
+                            }
+                            self.push_indent();
                         }
-                        self.push_indent();
                     }
                     self.push_content(&format!("</{}>", name));
                     self.emit_newline_or_continue(
@@ -285,8 +289,18 @@ impl<'a> Formatter<'a> {
                     );
                     return;
                 } else {
-                    self.push_content(raw);
-                    self.at_start_of_line = raw.ends_with('\n');
+                    // djlint's collapse_whitespace pre-pass normalises
+                    // tags everywhere, including inside verbatim blocks:
+                    // multi-line attribute lists are folded to one line.
+                    let tag_content: std::borrow::Cow<str> =
+                        if raw.contains('\n') || raw.contains('\r') {
+                            let ws_re = WHITESPACE_RE.get_or_init(|| Regex::new(r"\s+").unwrap());
+                            std::borrow::Cow::Owned(ws_re.replace_all(raw, " ").into_owned())
+                        } else {
+                            std::borrow::Cow::Borrowed(raw)
+                        };
+                    self.push_content(&tag_content);
+                    self.at_start_of_line = tag_content.ends_with('\n');
                     return;
                 }
             }
