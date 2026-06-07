@@ -999,7 +999,21 @@ impl<'a> Formatter<'a> {
                     self.output_line_index += raw.chars().filter(|&c| c == '\n').count();
                     self.at_start_of_line = true;
                 } else if !self.at_start_of_line {
-                    self.push_content(raw);
+                    // Skip pure-whitespace text immediately before a closing
+                    // inline tag on the same line (djlint condense_html strips
+                    // trailing whitespace between inline content and closers).
+                    let next_is_closing_inline = self.pos + 1 < self.tokens.len()
+                        && matches!(
+                            &self.tokens[self.pos + 1],
+                            Token::Tag {
+                                name: n,
+                                is_closing: true,
+                                ..
+                            } if is_inline_tag(n)
+                        );
+                    if !next_is_closing_inline {
+                        self.push_content(raw);
+                    }
                 }
             }
         }
@@ -1270,6 +1284,12 @@ impl<'a> Formatter<'a> {
                             // opening tags and increments even inside
                             // condensed blocks, so unclosed tags "leak"
                             // indent to subsequent lines.
+                            // Use local_depth so that extra closing tags
+                            // (e.g. a second </span> inside a same-line
+                            // {% if %}...{% endif %} block) do not
+                            // decrement the indent below what the block's
+                            // own opens warrant.
+                            let mut local_depth: usize = 0;
                             for &child_idx in &children {
                                 match &self.tokens[child_idx] {
                                     Token::Tag {
@@ -1278,13 +1298,17 @@ impl<'a> Formatter<'a> {
                                         is_self_closing: false,
                                         ..
                                     } if is_inline_tag(n) || is_html_block_tag(n) => {
+                                        local_depth += 1;
                                         self.indent_level += 1;
                                     }
                                     Token::Tag {
                                         name: n,
                                         is_closing: true,
                                         ..
-                                    } if is_inline_tag(n) || is_html_block_tag(n) => {
+                                    } if (is_inline_tag(n) || is_html_block_tag(n))
+                                        && local_depth > 0 =>
+                                    {
+                                        local_depth -= 1;
                                         self.indent_level = self.indent_level.saturating_sub(1);
                                     }
                                     _ => {}
@@ -1865,6 +1889,42 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
             let mut j = index + 1;
             let mut depth = 1;
             while j < tokens.len() {
+                // When a template block opens AND closes on the same source
+                // line (e.g. `{% if %}..{% endif %}` all on one line), djlint's
+                // line-based indenter ignores any HTML opening/closing tags
+                // inside that block for indentation purposes.  Mirror this by
+                // skipping to the template closer so unbalanced HTML inside
+                // the block does not affect our depth counter.
+                if let Token::DjangoBlock { raw, .. } = &tokens[j] {
+                    let tag_name = get_django_tag_name(raw).unwrap_or("");
+                    let is_potential_opener = !tag_name.starts_with("end")
+                        && !matches!(tag_name, "else" | "elif" | "empty" | "");
+                    if is_potential_opener {
+                        let opener_line = tokens[j].line();
+                        let mut k = j + 1;
+                        let mut block_depth: usize = 1;
+                        while k < tokens.len() && tokens[k].line() == opener_line {
+                            if let Token::DjangoBlock { raw: kr, .. } = &tokens[k] {
+                                let kn = get_django_tag_name(kr).unwrap_or("");
+                                if kn == tag_name {
+                                    block_depth += 1;
+                                } else if kn.starts_with("end") && &kn[3..] == tag_name {
+                                    block_depth -= 1;
+                                    if block_depth == 0 {
+                                        // Found the matching closer on the
+                                        // same line — skip to it.
+                                        j = k;
+                                        break;
+                                    }
+                                }
+                            }
+                            k += 1;
+                        }
+                        // If block_depth > 0, no same-line closer was found;
+                        // fall through to normal handling below.
+                    }
+                }
+
                 match &tokens[j] {
                     Token::Tag {
                         name: n,
@@ -2136,7 +2196,7 @@ fn format_range_inlined(
                                 indent_level,
                                 config,
                             );
-                            result.push_str(&inner_content);
+                            result.push_str(inner_content.trim_end());
                             result.push_str(&format!("</{}>", name));
                             k = j;
                         } else {
