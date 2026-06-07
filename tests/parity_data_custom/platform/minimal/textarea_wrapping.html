@@ -1,0 +1,7 @@
+<textarea name="prompt"
+          id="prompt"
+          rows="20"
+          x-model="editPrompt"
+          :class="submitted && !editPrompt.trim() ? 'border-red-500' : 'border-stroke'"
+          class="block p-2.5 w-full text-sm text-white rounded-md border focus:ring-1 focus:outline-none bg-primary2 [-webkit-text-fill-color:white] focus:ring-action1"
+          placeholder="Enter your custom prompt here..."></textarea>

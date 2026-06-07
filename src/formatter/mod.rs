@@ -440,6 +440,24 @@ impl<'a> Formatter<'a> {
                 let is_ignored_block =
                     matches!(name_lower.as_str(), "pre" | "textarea") && !is_self_closing;
 
+                // djlint wraps textarea attributes when the entire element is
+                // self-contained on one "item" (opening tag and closing tag on
+                // the same source line with no non-whitespace content between
+                // them). In that case it calls format_attributes just like any
+                // other tag. When content follows on a separate line, djlint
+                // treats the opening tag as an ignored-block opener and skips
+                // format_attributes entirely.
+                let textarea_is_inline = name_lower == "textarea"
+                    && !is_self_closing
+                    && closing_idx
+                        .map(|j| {
+                            self.tokens[j].line() == token.ends_on_line()
+                                && children.iter().all(|&ci| {
+                                    matches!(&self.tokens[ci], Token::Text { raw, .. } if raw.trim().is_empty())
+                                })
+                        })
+                        .unwrap_or(false);
+
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
                     self.trim_and_newline();
                 }
@@ -470,6 +488,7 @@ impl<'a> Formatter<'a> {
                     spaces_before_tag,
                     self.config,
                     is_ignored_block,
+                    textarea_is_inline,
                 );
                 self.push_content(&formatted_tag);
 
@@ -1323,6 +1342,7 @@ fn trim_trailing_whitespace(s: &mut String) {
 
 static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
 
+#[allow(clippy::too_many_arguments)]
 fn format_tag(
     name: &str,
     raw: &str,
@@ -1331,6 +1351,7 @@ fn format_tag(
     spaces_before_tag: usize,
     config: &Config,
     is_ignored_block: bool,
+    allow_attr_wrap: bool,
 ) -> String {
     let attr_re_str = if config.better_attribute_parsing {
         r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#
@@ -1543,8 +1564,9 @@ fn format_tag(
     let total_line_len =
         (indent_level * config.indent) + name.len() + 1 + raw_attrs_collapsed.len() + 1;
 
+    let allow_wrap = should_wrap_attributes(name) || allow_attr_wrap;
     if (raw_attrs_len < config.max_attribute_length && total_line_len <= config.max_line_length)
-        || !should_wrap_attributes(name)
+        || !allow_wrap
     {
         // When not wrapping, use raw_attrs_collapsed which preserves the
         // original style attribute (including trailing semicolons), matching
@@ -1979,7 +2001,16 @@ fn is_tag_range_inlinable(
                 name.to_lowercase().as_str(),
                 "pre" | "textarea" | "script" | "style"
             );
-            let formatted = format_tag(name, raw, *is_self_closing, 0, 0, config, is_ignored_block);
+            let formatted = format_tag(
+                name,
+                raw,
+                *is_self_closing,
+                0,
+                0,
+                config,
+                is_ignored_block,
+                false,
+            );
             if formatted.contains('\n') {
                 return false;
             }
@@ -2060,6 +2091,7 @@ fn format_range_inlined(
                                 indent_level * config.indent,
                                 config,
                                 is_ignored_block,
+                                false,
                             ));
                             let sub_elements = get_logical_elements(&children, tokens);
                             let inner_content = format_range_inlined_joined(
@@ -2080,6 +2112,7 @@ fn format_range_inlined(
                                 indent_level * config.indent,
                                 config,
                                 is_ignored_block,
+                                false,
                             ));
                         }
                     } else {
@@ -2091,6 +2124,7 @@ fn format_range_inlined(
                             indent_level * config.indent,
                             config,
                             is_ignored_block,
+                            false,
                         ));
                     }
                 }
