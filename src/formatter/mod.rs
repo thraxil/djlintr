@@ -384,6 +384,28 @@ impl<'a> Formatter<'a> {
                 self.push_content(&format!("</{}>", name));
                 self.emit_newline_or_continue(token, is_inline_tag(name));
             } else {
+                // djlint checks for "djlint:off" in every item *before*
+                // formatting.  When it fires on an opening tag (e.g.
+                // `<div {# djlint:off #}>`), the tag is emitted verbatim
+                // and indent tracking is skipped entirely — no indent
+                // increment, no parent_stack push.  Subsequent tokens are
+                // then emitted raw until a "djlint:on" token re-enables
+                // formatting (at whatever indent_level is current, which
+                // stays at whatever it was before this tag since it was
+                // never incremented).
+                if !is_self_closing && raw.contains("djlint:off") && !raw.contains("djlint:on") {
+                    if !self.at_start_of_line && is_html_block_tag(name) {
+                        self.trim_and_newline();
+                    }
+                    if self.at_start_of_line {
+                        self.push_indent();
+                    }
+                    self.push_content(raw);
+                    self.formatting_enabled = false;
+                    self.at_start_of_line = false;
+                    return;
+                }
+
                 let (children, closing_idx) = get_children_info(self.pos, &self.tokens);
 
                 // Detect a "mismatched void": an opening tag with no
