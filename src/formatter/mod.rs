@@ -2007,6 +2007,13 @@ fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usiz
                         is_self_closing: false,
                         ..
                     } if n.eq_ignore_ascii_case(name) => {
+                        // Push the nested same-name opener as a child BEFORE
+                        // incrementing depth so it is visible to
+                        // get_logical_elements (and format_range_inlined can
+                        // recurse into it correctly).
+                        if depth == 1 {
+                            children.push(j);
+                        }
                         depth += 1;
                     }
                     Token::Tag {
