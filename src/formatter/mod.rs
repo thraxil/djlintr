@@ -1044,7 +1044,15 @@ impl<'a> Formatter<'a> {
             self.at_start_of_line = raw.ends_with('\n');
         } else {
             if self.at_start_of_line {
-                self.push_indent();
+                // When this source line ends with an unmatched inline close
+                // tag (net-negative inline balance), djlint emits the whole
+                // line at the parent's (pre-decremented) indent level.
+                let dedent = line_ends_with_net_inline_close(&self.tokens, self.pos)
+                    && self
+                        .parent_stack
+                        .last()
+                        .is_some_and(|&(_, inc, tw, _)| inc && !tw);
+                self.push_indent_maybe_dedented(dedent);
             }
             self.push_content(&normalize_django(raw));
             self.emit_newline_or_continue(token, true);
@@ -1848,6 +1856,47 @@ fn is_inline_ish(token: &Token, config: &Config) -> bool {
 
 fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
     crate::tags::is_django_block_tag(name, custom_blocks)
+}
+
+/// Returns true when the source line starting at `from_pos` ends with a
+/// net-negative inline-tag balance, meaning there is an unmatched inline
+/// closing tag at the end of the line.  Used to pre-decrement indent before
+/// emitting content on that line, matching djlint's item-level behaviour.
+fn line_ends_with_net_inline_close(tokens: &[Token], from_pos: usize) -> bool {
+    if from_pos >= tokens.len() {
+        return false;
+    }
+    let line = tokens[from_pos].line();
+    let mut net: i32 = 0;
+    let mut last_was_inline_close = false;
+    let mut j = from_pos;
+    while j < tokens.len() && tokens[j].line() == line {
+        match &tokens[j] {
+            Token::Tag {
+                name,
+                is_closing: false,
+                is_self_closing: false,
+                ..
+            } if is_inline_tag(name) => {
+                net += 1;
+                last_was_inline_close = false;
+            }
+            Token::Tag {
+                name,
+                is_closing: true,
+                ..
+            } if is_inline_tag(name) => {
+                net -= 1;
+                last_was_inline_close = true;
+            }
+            Token::Tag { .. } => {
+                last_was_inline_close = false;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    last_was_inline_close && net < 0
 }
 
 /// Template tags that always occupy their own line but do NOT open an
