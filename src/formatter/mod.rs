@@ -840,20 +840,28 @@ impl<'a> Formatter<'a> {
             self.config,
         );
         let collapsed_content = content.trim();
-        let tag_last_line_len = formatted_tag.split('\n').next_back().unwrap_or("").len();
+        // Use char counts (not byte lengths) to match djlint's Python
+        // len(), which counts Unicode code points, not UTF-8 bytes.
+        let tag_last_line_len = formatted_tag
+            .split('\n')
+            .next_back()
+            .unwrap_or("")
+            .chars()
+            .count();
         let current_line_len = if formatted_tag.contains('\n') {
             tag_last_line_len
         } else {
             (self.indent_level * self.config.indent) + tag_last_line_len
         };
-        let projected_len = current_line_len + collapsed_content.len() + name.len() + 3;
+        let projected_len = current_line_len + collapsed_content.chars().count() + name.len() + 3;
 
         // djlint calculates combined length for condensation using regex:
         // len(last_line_of_open_tag + content + close_tag)
         // Which effectively ignores the indentation of the open tag
         // if the open tag is a single line, and only considers the last line
         // if it's multiline.
-        let djlint_condensed_len = tag_last_line_len + collapsed_content.len() + name.len() + 3;
+        let djlint_condensed_len =
+            tag_last_line_len + collapsed_content.chars().count() + name.len() + 3;
 
         // djlint ignores the outer indentation when deciding whether to
         // collapse: it checks condensed length (tag last line + content +
