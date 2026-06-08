@@ -23,6 +23,8 @@ struct Formatter<'a> {
     last_increment_line: Option<usize>,
     last_decrement_line: Option<usize>,
     output_line_index: usize,
+    /// (source_line, tag_name) of the most recent inline-tag collapse.
+    last_inline_collapse: Option<(usize, &'a str)>,
 }
 
 impl<'a> Formatter<'a> {
@@ -41,6 +43,7 @@ impl<'a> Formatter<'a> {
             last_increment_line: None,
             last_decrement_line: None,
             output_line_index: 0,
+            last_inline_collapse: None,
         }
     }
 
@@ -233,7 +236,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn handle_tag(&mut self, token: &Token) {
+    fn handle_tag(&mut self, token: &Token<'a>) {
         if let Token::Tag {
             name,
             raw,
@@ -339,8 +342,20 @@ impl<'a> Formatter<'a> {
                     .map(|pos| self.tokens[pos].line() == token.line())
                     .unwrap_or(false);
 
+                // djlint treats a line that starts with <tag> and ends with
+                // </tag> (SAME tag name) as net-0, even when the inner pair
+                // also closes immediately.  An extra closer whose name
+                // matches the most-recently-collapsed inline tag on the same
+                // source line should therefore not decrement.
+                let is_extra_closer_after_collapse = !open_close_same_line
+                    && self.last_inline_collapse.is_some_and(|(line, tag)| {
+                        line == token.line() && tag.to_lowercase() == name.to_lowercase()
+                    });
+
                 let should_decrement = if open_close_same_line && was_incremented {
                     true
+                } else if is_extra_closer_after_collapse {
+                    false
                 } else {
                     (was_incremented
                         || (was_inline_mid_line
@@ -656,7 +671,7 @@ impl<'a> Formatter<'a> {
     fn try_collapse_html_tag(
         &mut self,
         token: &Token,
-        name: &str,
+        name: &'a str,
         children: &[usize],
         closing_idx: Option<usize>,
         formatted_tag: &str,
@@ -895,6 +910,9 @@ impl<'a> Formatter<'a> {
             }
 
             self.pos = j;
+            if is_inline_tag(name) {
+                self.last_inline_collapse = Some((self.tokens[j].line(), name));
+            }
             self.emit_newline_or_continue(token, is_inline_tag(name));
             true
         } else {
