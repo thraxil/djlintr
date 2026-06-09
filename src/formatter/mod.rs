@@ -384,7 +384,7 @@ impl<'a> Formatter<'a> {
                 // But wait, if children forced a newline, at_start_of_line is true!
                 // So if we are NOT at the start of the line, the last child was inline.
                 // In Python djlint, if the last child was inline, the closing tag stays inline.
-                let force_newline = !is_inline_tag(name);
+                let force_newline = !is_inline_tag(name) || is_break_before_close_tag(name);
 
                 // If it's an inline tag whose attributes wrapped, and its last child
                 // was a block element (which is invalid HTML but possible), or it had
@@ -397,7 +397,10 @@ impl<'a> Formatter<'a> {
                     self.push_indent();
                 }
                 self.push_content(&format!("</{}>", name));
-                self.emit_newline_or_continue(token, is_inline_tag(name));
+                self.emit_newline_or_continue(
+                    token,
+                    is_inline_tag(name) && !is_break_before_close_tag(name),
+                );
             } else {
                 // djlint checks for "djlint:off" in every item *before*
                 // formatting.  When it fires on an opening tag (e.g.
@@ -955,7 +958,7 @@ impl<'a> Formatter<'a> {
                             name: n,
                             is_closing: true,
                             ..
-                        } if is_inline_tag(n)
+                        } if is_inline_tag(n) && !is_break_before_close_tag(n)
                     )
                     && self
                         .parent_stack
@@ -1893,7 +1896,7 @@ fn line_ends_with_net_inline_close(tokens: &[Token], from_pos: usize) -> bool {
                 name,
                 is_closing: true,
                 ..
-            } if is_inline_tag(name) => {
+            } if is_inline_tag(name) && !is_break_before_close_tag(name) => {
                 net -= 1;
                 last_was_inline_close = true;
             }
@@ -1905,6 +1908,15 @@ fn line_ends_with_net_inline_close(tokens: &[Token], from_pos: usize) -> bool {
         j += 1;
     }
     last_was_inline_close && net < 0
+}
+
+/// Tags that djlint's `expand_html` step always places on their own line
+/// (break before AND after) even though they appear in `is_inline_tag` for
+/// collapse purposes.  When one of these appears as a CLOSER after non-
+/// whitespace content on the same source line, it must be forced onto its
+/// own line (matching djlint's `break_html_tags` behaviour).
+fn is_break_before_close_tag(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "option")
 }
 
 /// Template tags that always occupy their own line but do NOT open an
