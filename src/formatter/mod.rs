@@ -9,6 +9,34 @@ use regex::Regex;
 use std::sync::OnceLock;
 use tokenizer::{Token, Tokenizer};
 
+/// Pre-scan `tokens` to find which `<pre>` / `<textarea>` openings have no
+/// matching close tag.  These unclosed verbatim blocks need special treatment:
+/// djlint's `clean_whitespace` step strips leading indentation from content
+/// outside properly-closed ignored blocks, so we replicate that behaviour by
+/// stripping whitespace-only text tokens when inside such a block.
+fn find_unclosed_verbatim_positions(tokens: &[Token<'_>]) -> std::collections::HashSet<usize> {
+    let mut open_stack: Vec<(usize, String)> = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if let Token::Tag {
+            name,
+            is_closing,
+            is_self_closing,
+            ..
+        } = token
+        {
+            let lower = name.to_lowercase();
+            if matches!(lower.as_str(), "pre" | "textarea") && !is_self_closing {
+                if !is_closing {
+                    open_stack.push((i, lower));
+                } else if let Some(j) = open_stack.iter().rposition(|(_, n)| n == &lower) {
+                    open_stack.remove(j);
+                }
+            }
+        }
+    }
+    open_stack.into_iter().map(|(pos, _)| pos).collect()
+}
+
 struct Formatter<'a> {
     config: &'a Config,
     output: String,
@@ -17,6 +45,12 @@ struct Formatter<'a> {
     pos: usize,
     formatting_enabled: bool,
     verbatim_tags: Vec<String>,
+    /// True when the current (top) verbatim block was never closed in the source.
+    /// djlint's clean_whitespace strips leading indentation for such blocks, so
+    /// we replicate that by dropping spaces/tabs from whitespace-only text tokens.
+    verbatim_is_unclosed: bool,
+    /// Positions (in `tokens`) of verbatim-tag opens that have no matching close.
+    unclosed_verbatim_positions: std::collections::HashSet<usize>,
     at_start_of_line: bool,
     /// Stack of (token_pos, incremented, tag_was_wrapped, was_inline_mid_line).
     parent_stack: Vec<(usize, bool, bool, bool)>,
@@ -30,6 +64,7 @@ struct Formatter<'a> {
 impl<'a> Formatter<'a> {
     fn new(config: &'a Config, source: &'a str) -> Self {
         let tokens: Vec<Token> = Tokenizer::new(source).collect();
+        let unclosed_verbatim_positions = find_unclosed_verbatim_positions(&tokens);
         Self {
             config,
             output: String::new(),
@@ -38,6 +73,8 @@ impl<'a> Formatter<'a> {
             pos: 0,
             formatting_enabled: true,
             verbatim_tags: Vec::new(),
+            verbatim_is_unclosed: false,
+            unclosed_verbatim_positions,
             at_start_of_line: true,
             parent_stack: Vec::new(),
             last_increment_line: None,
@@ -251,6 +288,7 @@ impl<'a> Formatter<'a> {
                 if *is_closing && self.verbatim_tags.last() == Some(&name_lower) {
                     // Closing verbatim tag
                     let was_verbatim_name = self.verbatim_tags.pop();
+                    self.verbatim_is_unclosed = false;
                     let is_closing_verbatim = was_verbatim_name.is_some();
 
                     let was_incremented = self
@@ -599,6 +637,8 @@ impl<'a> Formatter<'a> {
                     if is_potentially_verbatim {
                         is_verbatim = true;
                         self.verbatim_tags.push(name_lower.clone());
+                        self.verbatim_is_unclosed =
+                            self.unclosed_verbatim_positions.contains(&self.pos);
                     }
 
                     let tag_was_wrapped = formatted_tag.contains('\n');
@@ -934,7 +974,16 @@ impl<'a> Formatter<'a> {
     fn handle_text(&mut self, token: &Token) {
         let raw = token.raw();
         if !self.verbatim_tags.is_empty() {
-            self.push_content(raw);
+            // djlint's clean_whitespace strips leading indentation from content
+            // in unclosed verbatim blocks (e.g. an unclosed <pre>) because its
+            // ignored-block regex requires a matching close tag.  Replicate that
+            // by dropping spaces/tabs from whitespace-only inter-tag tokens.
+            if self.verbatim_is_unclosed && raw.trim().is_empty() {
+                let stripped: String = raw.chars().filter(|&c| c == '\n' || c == '\r').collect();
+                self.push_content(&stripped);
+            } else {
+                self.push_content(raw);
+            }
             // Don't override at_start_of_line — push_content already
             // tracks this correctly based on the content's newlines.
         } else {
