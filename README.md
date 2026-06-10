@@ -55,6 +55,24 @@ djlintr [OPTIONS] <PATHS>...
 * `ignore`: A list of rule codes to ignore.
 * `custom_blocks`: A list of custom block tags.
 
+### Python Compatibility Flags
+
+`djlintr` aims for byte-for-byte parity with the original Python `djlint`. In a
+couple of places djlintr has a "better" implementation than the Python original,
+but defaults to reproducing the Python behaviour so that existing projects get
+identical output. These flags let you opt in to the improved (but
+intentionally non-identical) behaviour:
+
+* `better_attribute_parsing` (default: `false`): When `false`, djlintr uses the
+  same attribute-matching regex as Python `djlint`, quirks and all. Set to
+  `true` to use djlintr's cleaner attribute-parsing regex, which handles some
+  edge cases more correctly but may produce output that differs from Python
+  `djlint`.
+* `require_closed_blocks` (default: `false`): When `false`, djlintr indents the
+  contents of a recognized block tag even when no explicit closing tag is
+  present, matching Python `djlint`'s lenient behaviour. Set to `true` to only
+  indent blocks that have an explicit closing tag.
+
 #### Example `.djlintrc`
 ```json
 {
