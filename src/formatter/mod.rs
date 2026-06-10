@@ -9,6 +9,14 @@ use regex::Regex;
 use std::sync::OnceLock;
 use tokenizer::{Token, Tokenizer};
 
+mod predicates;
+mod tag_format;
+mod tree;
+
+use predicates::*;
+use tag_format::*;
+use tree::*;
+
 /// Pre-scan `tokens` to find which `<pre>` / `<textarea>` openings have no
 /// matching close tag.  These unclosed verbatim blocks need special treatment:
 /// djlint's `clean_whitespace` step strips leading indentation from content
@@ -88,6 +96,29 @@ impl<'a> Formatter<'a> {
         self.output.push('\n');
         self.output_line_index += 1;
         self.at_start_of_line = true;
+    }
+
+    /// Increment the indent level, honoring djlint's "at most one indent
+    /// change per output line" rule.  When `force` is true the dedup check is
+    /// skipped (e.g. the child starts on a freshly-emitted line).  Returns
+    /// `true` if the increment was actually applied.
+    fn increment_indent(&mut self, force: bool) -> bool {
+        if !force && self.last_increment_line == Some(self.output_line_index) {
+            return false;
+        }
+        self.indent_level += 1;
+        self.last_increment_line = Some(self.output_line_index);
+        true
+    }
+
+    /// Decrement the indent level (saturating), honoring djlint's "at most one
+    /// indent change per output line" rule.
+    fn decrement_indent(&mut self) {
+        if self.last_decrement_line == Some(self.output_line_index) {
+            return;
+        }
+        self.indent_level = self.indent_level.saturating_sub(1);
+        self.last_decrement_line = Some(self.output_line_index);
     }
 
     fn push_content(&mut self, s: &str) {
@@ -298,12 +329,7 @@ impl<'a> Formatter<'a> {
                         .unwrap_or(false);
 
                     if was_incremented {
-                        let already_decremented =
-                            self.last_decrement_line == Some(self.output_line_index);
-                        if !already_decremented {
-                            self.indent_level = self.indent_level.saturating_sub(1);
-                            self.last_decrement_line = Some(self.output_line_index);
-                        }
+                        self.decrement_indent();
                     }
 
                     if !self.at_start_of_line && !is_inline_tag(name) && !is_closing_verbatim {
@@ -402,12 +428,7 @@ impl<'a> Formatter<'a> {
                         && !closing_midline_with_trailing
                 };
                 if should_decrement {
-                    let already_decremented =
-                        self.last_decrement_line == Some(self.output_line_index);
-                    if !already_decremented {
-                        self.indent_level = self.indent_level.saturating_sub(1);
-                        self.last_decrement_line = Some(self.output_line_index);
-                    }
+                    self.decrement_indent();
                 }
 
                 // Push a newline before the closing tag when:
@@ -684,20 +705,11 @@ impl<'a> Formatter<'a> {
                         && !inline_mid_line
                         && !is_unclosed_orphan
                     {
-                        // Skip dedup when:
+                        // Force (skip dedup) when:
                         // - we just pushed a newline (children on a new line)
                         // - tag was at start of line (tag is a child that
                         //   should increment independently of its parent)
-                        let already_incremented = if pushed_newline || was_at_start_of_line {
-                            false
-                        } else {
-                            self.last_increment_line == Some(self.output_line_index)
-                        };
-                        if !already_incremented {
-                            self.indent_level += 1;
-                            self.last_increment_line = Some(self.output_line_index);
-                            incremented = true;
-                        }
+                        incremented = self.increment_indent(pushed_newline || was_at_start_of_line);
                     }
 
                     if !is_self_closing && !is_unclosed_orphan {
@@ -920,10 +932,9 @@ impl<'a> Formatter<'a> {
         let skip_line_length_check =
             !has_any_tag && djlint_condensed_len < self.config.max_line_length;
 
-        if (projected_len < self.config.max_line_length
+        if projected_len < self.config.max_line_length
             || is_potentially_verbatim
-            || skip_line_length_check)
-            && (logical_elements.is_empty() || !logical_elements.is_empty())
+            || skip_line_length_check
         {
             self.push_content(collapsed_content);
             self.push_content(&format!("</{}>", name));
@@ -1220,12 +1231,7 @@ impl<'a> Formatter<'a> {
 
             if (is_closing && is_block) || is_reindent {
                 self.parent_stack.pop();
-
-                let already_decremented = self.last_decrement_line == Some(self.output_line_index);
-                if !already_decremented {
-                    self.indent_level = self.indent_level.saturating_sub(1);
-                    self.last_decrement_line = Some(self.output_line_index);
-                }
+                self.decrement_indent();
             }
 
             // Check if we can inline
@@ -1431,14 +1437,7 @@ impl<'a> Formatter<'a> {
                             && can_have_closing_tag(actual_tag_name, &self.config.custom_blocks));
 
                     if should_indent {
-                        let already_incremented =
-                            self.last_increment_line == Some(self.output_line_index);
-                        let mut incremented = false;
-                        if !already_incremented {
-                            self.indent_level += 1;
-                            self.last_increment_line = Some(self.output_line_index);
-                            incremented = true;
-                        }
+                        let incremented = self.increment_indent(false);
                         self.parent_stack
                             .push((self.pos, incremented, false, false));
                     }
@@ -1454,8 +1453,6 @@ pub fn format(config: &Config, source: &str) -> String {
 
 static VAR_RE: OnceLock<Regex> = OnceLock::new();
 static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
-static DJANGO_ATTR_AFTER_RE: OnceLock<Regex> = OnceLock::new();
-static DJANGO_ATTR_BEFORE_RE: OnceLock<Regex> = OnceLock::new();
 
 fn normalize_django(raw: &str) -> String {
     let var_re = VAR_RE.get_or_init(|| Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap());
@@ -1490,940 +1487,3 @@ fn trim_trailing_whitespace(s: &mut String) {
 }
 
 static WHITESPACE_RE: OnceLock<Regex> = OnceLock::new();
-
-#[allow(clippy::too_many_arguments)]
-fn format_tag(
-    name: &str,
-    raw: &str,
-    is_self_closing: bool,
-    indent_level: usize,
-    spaces_before_tag: usize,
-    config: &Config,
-    is_ignored_block: bool,
-    allow_attr_wrap: bool,
-) -> String {
-    let attr_re_str = if config.better_attribute_parsing {
-        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#
-    } else {
-        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|\{\{[\s\S]*?\}\}|[^\s>]+))?|(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|["'])"#
-    };
-
-    // In actual implementation we wouldn't want to recompile the regex
-    // every time. However, to match the config option and debug, we'll
-    // compile it here. Once fixed we can make it a static or put it in config.
-    let attr_re = Regex::new(attr_re_str).unwrap();
-    let whitespace_re = WHITESPACE_RE.get_or_init(|| Regex::new(r#"\s+"#).unwrap());
-
-    let start_pos = if raw.starts_with("</") {
-        2 + name.len()
-    } else {
-        1 + name.len()
-    };
-    let end_pos = if raw.ends_with("/>") {
-        raw.len() - 2
-    } else {
-        raw.len() - 1
-    };
-    let content = &raw[start_pos..end_pos];
-
-    // Check if the attribute regex fully covers the content. If there are
-    // non-whitespace characters between (or after) matches the tag contains
-    // syntax the regex cannot parse (e.g. malformed template tags with
-    // unbalanced quotes). In that case, preserve the original tag text
-    // instead of reformatting, matching djlint's behavior of leaving
-    // unparseable tags alone.
-    {
-        let mut scan_end = 0;
-        let mut has_unparsed = false;
-        for m in attr_re.find_iter(content) {
-            if content[scan_end..m.start()]
-                .chars()
-                .any(|c| !c.is_ascii_whitespace())
-            {
-                has_unparsed = true;
-                break;
-            }
-            scan_end = m.end();
-        }
-        if !has_unparsed
-            && content[scan_end..]
-                .chars()
-                .any(|c| !c.is_ascii_whitespace())
-        {
-            has_unparsed = true;
-        }
-        if has_unparsed {
-            // Collapse internal whitespace but otherwise preserve as-is.
-            let collapsed = whitespace_re.replace_all(raw.trim(), " ");
-            return collapsed.to_string();
-        }
-    }
-
-    // Track per-attribute metadata so the wrapping path can keep attributes
-    // inside {% if %}...{% endif %} on the same line and suppress spaces
-    // between template tags and their adjacent content (matching djlint).
-    let mut attr_depth: Vec<usize> = Vec::new();
-    let mut attr_is_django: Vec<bool> = Vec::new();
-    // Whether there was whitespace filler between the previous attribute
-    // and this one in the original source.  Used by the wrapping path to
-    // decide whether to insert a space (e.g. `{% if x %}checked{% endif %}`
-    // has no filler, while `{% if x %} a="1" {% endif %}` does).
-    let mut attr_has_leading_filler: Vec<bool> = Vec::new();
-    let attrs: Vec<String> = {
-        let mut depth: usize = 0;
-        let mut last_match_end: usize = 0;
-        attr_re
-            .find_iter(content)
-            .map(|m| {
-                let filler = &content[last_match_end..m.start()];
-                let has_filler = !filler.trim().is_empty()
-                    || filler.contains(' ')
-                    || filler.contains('\n')
-                    || filler.contains('\t');
-                attr_has_leading_filler.push(has_filler);
-                last_match_end = m.end();
-
-                let raw_attr = m.as_str();
-                let is_django_block = raw_attr.starts_with("{%");
-                attr_is_django.push(is_django_block);
-                if is_django_block {
-                    let inner = raw_attr[2..raw_attr.len() - 2].trim();
-                    let is_closing = inner.starts_with("end")
-                        || inner.starts_with("else")
-                        || inner.starts_with("elif");
-                    if is_closing {
-                        depth = depth.saturating_sub(1);
-                    }
-                    attr_depth.push(depth);
-                    if !is_closing {
-                        let is_opener = inner.starts_with("if")
-                            || inner.starts_with("for")
-                            || inner.starts_with("with")
-                            || inner.starts_with("block")
-                            || inner.starts_with("filter")
-                            || inner.starts_with("autoescape")
-                            || inner.starts_with("spaceless");
-                        // When the non-better regex matches an entire
-                        // {% if %}...{% endif %} block as one token, the
-                        // raw attr already contains both opener and closer.
-                        // Don't increment depth in that case — the net
-                        // change is zero and subsequent attrs should still
-                        // get their own wrapped lines.
-                        let is_self_contained = raw_attr.contains("endif")
-                            || raw_attr.contains("endfor")
-                            || raw_attr.contains("endeach")
-                            || raw_attr.contains("endall");
-                        if is_opener && !is_self_contained {
-                            depth += 1;
-                        }
-                    }
-                } else {
-                    attr_depth.push(depth);
-                }
-                let normalized = normalize_django(raw_attr);
-                let collapsed = whitespace_re.replace_all(&normalized, " ").to_string();
-                // Quote unquoted template-var values: `name={{ ... }}` →
-                // `name="{{ ... }}"`.  djlint's format_attributes does this
-                // when wrapping (the `attrs` list is only used in the
-                // wrapping path, so the non-wrapping output is unaffected).
-                if !is_django_block {
-                    if let Some(eq_pos) = collapsed.find("={{") {
-                        let value_part = collapsed[eq_pos + 1..].trim();
-                        if value_part.starts_with("{{") && value_part.ends_with("}}") {
-                            format!("{}=\"{}\"", &collapsed[..eq_pos], value_part)
-                        } else {
-                            collapsed
-                        }
-                    } else {
-                        collapsed
-                    }
-                } else {
-                    collapsed
-                }
-            })
-            .collect()
-    };
-
-    let mut last_end = 0;
-    let mut prev_was_django_block = false;
-    let mut django_block_depth: usize = 0;
-
-    // Build content string without style normalization. djlint only
-    // reformats style attributes when wrapping, so this string is used
-    // both for the length check and for the non-wrapping output path.
-    let mut raw_final_content = String::new();
-    for (idx, m) in attr_re.find_iter(content).enumerate() {
-        let filler = &content[last_end..m.start()];
-        let attr = m.as_str();
-        let is_django_block = attr.starts_with("{%") || attr.starts_with("{#");
-        let attr_content = if is_django_block && attr.len() > 4 {
-            attr[2..attr.len() - 2].trim()
-        } else {
-            ""
-        };
-        let is_closing_like = is_django_block
-            && (attr_content.starts_with("end")
-                || attr_content.starts_with("else")
-                || attr_content.starts_with("elif"));
-
-        if !is_ignored_block
-            && (prev_was_django_block || (is_closing_like && django_block_depth > 0 && idx > 0))
-        {
-            raw_final_content.push_str(filler.trim());
-        } else {
-            raw_final_content.push_str(filler);
-        }
-
-        let raw_normalized = normalize_django(attr);
-        raw_final_content.push_str(&raw_normalized);
-
-        if is_django_block {
-            if attr_content.starts_with("if")
-                || attr_content.starts_with("for")
-                || attr_content.starts_with("with")
-                || attr_content.starts_with("block")
-                || attr_content.starts_with("filter")
-                || attr_content.starts_with("autoescape")
-                || attr_content.starts_with("spaceless")
-            {
-                django_block_depth += 1;
-            } else if attr_content.starts_with("end") {
-                django_block_depth = django_block_depth.saturating_sub(1);
-            }
-        }
-
-        prev_was_django_block = is_django_block;
-        last_end = m.end();
-    }
-    let filler = &content[last_end..];
-    if !is_ignored_block && prev_was_django_block {
-        raw_final_content.push_str(filler.trim());
-    } else {
-        raw_final_content.push_str(filler);
-    }
-
-    // Collapse whitespace (e.g., multi-line attributes) to single spaces.
-    // This string preserves style attribute values as-is (including trailing
-    // semicolons), matching djlint which only reformats style when wrapping.
-    let raw_attrs_collapsed = whitespace_re.replace_all(&raw_final_content, " ");
-
-    // In non-better parsing mode the entire {% if %}...{% endif %} block is
-    // matched as a single attribute token, so spaces between the block
-    // delimiters and the enclosed HTML attributes survive whitespace collapse.
-    // Remove them here to match djlint's output. Skip for ignored blocks
-    // (textarea, pre) where attribute whitespace is left as-is.
-    let raw_attrs_collapsed = if !is_ignored_block {
-        let after_re =
-            DJANGO_ATTR_AFTER_RE.get_or_init(|| Regex::new(r"(%\}) ([a-zA-Z0-9_])").unwrap());
-        // Only remove space before closing blocks ({% end... %}, {% else %}, {% elif %})
-        // to avoid stripping the space before opening blocks like {% if a %} in
-        // `attr="v" {% if a %}`.
-        let before_re = DJANGO_ATTR_BEFORE_RE
-            .get_or_init(|| Regex::new(r#"([a-zA-Z0-9_"']) (\{%-?\s*(?:end|else|elif))"#).unwrap());
-        let s = after_re.replace_all(&raw_attrs_collapsed, "$1$2");
-        before_re.replace_all(&s, "$1$2").into_owned().into()
-    } else {
-        raw_attrs_collapsed
-    };
-
-    let raw_attrs_len = raw_attrs_collapsed.trim().len();
-
-    let total_line_len =
-        (indent_level * config.indent) + name.len() + 1 + raw_attrs_collapsed.len() + 1;
-
-    let allow_wrap = should_wrap_attributes(name) || allow_attr_wrap;
-    if (raw_attrs_len < config.max_attribute_length && total_line_len <= config.max_line_length)
-        || !allow_wrap
-    {
-        // When not wrapping, use raw_attrs_collapsed which preserves the
-        // original style attribute (including trailing semicolons), matching
-        // djlint's behavior of only reformatting style when wrapping.
-        let mut formatted = if raw.starts_with("</") {
-            format!("</{}", name)
-        } else {
-            format!("<{}", name)
-        };
-
-        formatted.push_str(raw_attrs_collapsed.trim_end());
-
-        if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
-            formatted.push_str(" />");
-        } else {
-            formatted.push('>');
-        }
-        return formatted;
-    }
-
-    let mut formatted = format!("<{}", name);
-    // djlint computes attr_indent as (whitespace immediately before the `<`)
-    // + len("<tagname ").  `spaces_before_tag` is that leading whitespace
-    // count, computed by the caller from the current output state.
-    let attr_indent = " ".repeat(spaces_before_tag + name.len() + 2);
-
-    for (idx, attr) in attrs.iter().enumerate() {
-        if idx == 0 {
-            formatted.push(' ');
-        } else if attr_depth[idx] > 0 || attr_depth[idx.saturating_sub(1)] > attr_depth[idx] {
-            // Inside a django block or closing a django block: stay on the
-            // same line.  Only add a space if the original source had
-            // whitespace filler between these attributes (e.g.
-            // `{% if x %} a="1" {% endif %}` has filler, but
-            // `{% if x %}checked{% endif %}` does not).
-            if attr_has_leading_filler[idx] {
-                formatted.push(' ');
-            }
-        } else {
-            formatted.push('\n');
-            formatted.push_str(&attr_indent);
-        }
-        if attr.starts_with("style=") {
-            formatted.push_str(&format_style_attribute(attr, &attr_indent));
-        } else {
-            formatted.push_str(attr);
-        }
-    }
-
-    if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
-        formatted.push_str(" />");
-    } else {
-        formatted.push('>');
-    }
-
-    formatted
-}
-
-fn format_style_attribute(attr: &str, indent: &str) -> String {
-    // Expect style="prop1: val1; prop2: val2;"
-    let quote = if attr.contains("=\"") { "\"" } else { "'" };
-    let content_start = attr.find(quote).unwrap_or(0) + 1;
-    let content_end = attr.rfind(quote).unwrap_or(attr.len());
-    let content = &attr[content_start..content_end];
-
-    let props: Vec<String> = content
-        .split(';')
-        .map(|s| normalize_django(s.trim()))
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if props.is_empty() {
-        return attr.to_string();
-    }
-
-    if indent.is_empty() {
-        // No wrapping requested, but still strip trailing semicolon if it's the only property
-        if props.len() == 1 {
-            return format!("style={}{}{}", quote, props[0], quote);
-        }
-        let mut result = format!("style={}{}", quote, props[0]);
-        for prop in props.iter().skip(1) {
-            result.push_str("; ");
-            result.push_str(prop);
-        }
-        result.push_str(quote);
-        return result;
-    }
-
-    let mut result = format!("style={}{}", quote, props[0]);
-    if props.len() > 1 {
-        for prop in props.iter().skip(1) {
-            result.push(';');
-            result.push('\n');
-            result.push_str(indent);
-            // Add additional indent for style property
-            result.push_str("       "); // "style=\"" is 7 chars
-            result.push_str(prop);
-        }
-    }
-    // djlint seems to strip trailing semicolon when wrapping
-    result.push_str(quote);
-    result
-}
-
-fn get_django_tag_name(raw: &str) -> Option<&str> {
-    let mut bytes = raw.as_bytes();
-    if bytes.starts_with(b"{%") {
-        bytes = &bytes[2..];
-    }
-    if bytes.starts_with(b"-") {
-        bytes = &bytes[1..];
-    }
-
-    // Find start of word
-    let mut start = 0;
-    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
-        start += 1;
-    }
-
-    if start == bytes.len() {
-        return None;
-    }
-
-    // Find end of word
-    let mut end = start;
-    while end < bytes.len()
-        && !bytes[end].is_ascii_whitespace()
-        && bytes[end] != b'%'
-        && bytes[end] != b'-'
-    {
-        end += 1;
-    }
-
-    // SAFETY: We only advanced indices over ASCII characters (whitespace, '%', '-'),
-    // so `start` and `end` are valid UTF-8 boundaries within `raw`.
-    let start_idx = raw.len() - bytes.len() + start;
-    let end_idx = raw.len() - bytes.len() + end;
-
-    Some(&raw[start_idx..end_idx])
-}
-
-/// Strip the "end" prefix from a Django tag name (e.g., "endblock" -> "block").
-/// Returns the original name if it doesn't start with "end".
-fn strip_end_prefix(name: &str) -> &str {
-    name.strip_prefix("end").unwrap_or(name)
-}
-
-fn is_reindent_tag(name: &str) -> bool {
-    matches!(name, "else" | "elif" | "empty")
-}
-
-fn is_strictly_inline(token: &Token, config: &Config, is_parent_django: bool) -> bool {
-    match token {
-        Token::DjangoVar { .. } => true,
-        Token::DjangoBlock { raw, .. } => {
-            if is_parent_django {
-                return false;
-            }
-            let tag_name = get_django_tag_name(raw).unwrap_or("");
-            if is_reindent_tag(tag_name) {
-                return false;
-            }
-            if is_django_block_self_closing(raw) {
-                return true;
-            }
-            !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
-        }
-        Token::Text { raw, .. } => !raw.trim().contains('\n'),
-        Token::Tag { name, raw, .. } => {
-            if is_parent_django {
-                is_inline_tag(name) && !raw.contains("{%")
-            } else {
-                is_inline_tag(name) && !raw.contains("{%") && !raw.contains("{{")
-            }
-        }
-        Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
-        Token::Doctype { .. } => false,
-    }
-}
-
-fn is_inline_ish(token: &Token, config: &Config) -> bool {
-    match token {
-        Token::DjangoVar { .. } => true,
-        Token::DjangoBlock { raw, .. } => {
-            let tag_name = get_django_tag_name(raw).unwrap_or("");
-            if is_reindent_tag(tag_name) {
-                return false;
-            }
-            if is_line_break_tag(tag_name) {
-                return false;
-            }
-            !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
-        }
-        Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
-        Token::Tag { name, .. } => is_inline_tag(name),
-        Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
-        Token::Doctype { .. } => false,
-    }
-}
-
-fn is_block_tag(name: &str, custom_blocks: &[String]) -> bool {
-    crate::tags::is_django_block_tag(name, custom_blocks)
-}
-
-/// Returns true when the source line starting at `from_pos` ends with a
-/// net-negative inline-tag balance, meaning there is an unmatched inline
-/// closing tag at the end of the line.  Used to pre-decrement indent before
-/// emitting content on that line, matching djlint's item-level behaviour.
-fn line_ends_with_net_inline_close(tokens: &[Token], from_pos: usize) -> bool {
-    if from_pos >= tokens.len() {
-        return false;
-    }
-    let line = tokens[from_pos].line();
-    let mut net: i32 = 0;
-    let mut last_was_inline_close = false;
-    let mut j = from_pos;
-    while j < tokens.len() && tokens[j].line() == line {
-        match &tokens[j] {
-            Token::Tag {
-                name,
-                is_closing: false,
-                is_self_closing: false,
-                ..
-            } if is_inline_tag(name) => {
-                net += 1;
-                last_was_inline_close = false;
-            }
-            Token::Tag {
-                name,
-                is_closing: true,
-                ..
-            } if is_inline_tag(name) && !is_break_before_close_tag(name) => {
-                net -= 1;
-                last_was_inline_close = true;
-            }
-            Token::Tag { .. } => {
-                last_was_inline_close = false;
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    last_was_inline_close && net < 0
-}
-
-/// Tags that djlint's `expand_html` step always places on their own line
-/// (break before AND after) even though they appear in `is_inline_tag` for
-/// collapse purposes.  When one of these appears as a CLOSER after non-
-/// whitespace content on the same source line, it must be forced onto its
-/// own line (matching djlint's `break_html_tags` behaviour).
-fn is_break_before_close_tag(name: &str) -> bool {
-    matches!(name.to_lowercase().as_str(), "option")
-}
-
-/// Template tags that always occupy their own line but do NOT open an
-/// indented block (no matching end-tag).  They are still collapsible by
-/// `try_collapse_html_tag` when they are the sole content of a short
-/// parent — matching djlint's two-phase expand-then-condense behaviour.
-fn is_line_break_tag(name: &str) -> bool {
-    matches!(name, "include")
-}
-
-/// Returns true for Cotton-style self-closing block tags (ending with `/ %}`).
-/// These never open an indented block even when the tag name is in custom_blocks.
-fn is_django_block_self_closing(raw: &str) -> bool {
-    let s = raw
-        .trim_end_matches('}')
-        .trim_end_matches('%')
-        .trim_end_matches('-')
-        .trim_end_matches(' ');
-    s.ends_with('/')
-}
-
-fn can_have_closing_tag(name: &str, custom_blocks: &[String]) -> bool {
-    let name_lower = name.to_lowercase();
-    let actual_name = name_lower.strip_prefix("end").unwrap_or(&name_lower);
-
-    matches!(
-        actual_name,
-        "block"
-            | "if"
-            | "ifchanged"
-            | "for"
-            | "with"
-            | "autoescape"
-            | "filter"
-            | "spaceless"
-            | "cache"
-            | "macro"
-            | "call"
-            | "set"
-            | "localize"
-            | "compress"
-            | "comment"
-            | "verbatim"
-            | "language"
-            | "thumbnail"
-            | "raw"
-    ) || custom_blocks
-        .iter()
-        .any(|b| b.eq_ignore_ascii_case(actual_name))
-}
-
-fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, Option<usize>) {
-    let mut children = Vec::new();
-    let token = &tokens[index];
-    match token {
-        Token::Tag { name, .. } => {
-            let mut j = index + 1;
-            let mut depth = 1;
-            while j < tokens.len() {
-                // When a template block opens AND closes on the same source
-                // line (e.g. `{% if %}..{% endif %}` all on one line), djlint's
-                // line-based indenter ignores any HTML opening/closing tags
-                // inside that block for indentation purposes.  Mirror this by
-                // skipping to the template closer so unbalanced HTML inside
-                // the block does not affect our depth counter.
-                if let Token::DjangoBlock { raw, .. } = &tokens[j] {
-                    let tag_name = get_django_tag_name(raw).unwrap_or("");
-                    let is_potential_opener = !tag_name.starts_with("end")
-                        && !matches!(tag_name, "else" | "elif" | "empty" | "");
-                    if is_potential_opener {
-                        let opener_line = tokens[j].line();
-                        let mut k = j + 1;
-                        let mut block_depth: usize = 1;
-                        while k < tokens.len() && tokens[k].line() == opener_line {
-                            if let Token::DjangoBlock { raw: kr, .. } = &tokens[k] {
-                                let kn = get_django_tag_name(kr).unwrap_or("");
-                                if kn == tag_name {
-                                    block_depth += 1;
-                                } else if kn.starts_with("end") && &kn[3..] == tag_name {
-                                    block_depth -= 1;
-                                    if block_depth == 0 {
-                                        // Found the matching closer on the
-                                        // same line — skip to it.
-                                        j = k;
-                                        break;
-                                    }
-                                }
-                            }
-                            k += 1;
-                        }
-                        // If block_depth > 0, no same-line closer was found;
-                        // fall through to normal handling below.
-                    }
-                }
-
-                match &tokens[j] {
-                    Token::Tag {
-                        name: n,
-                        is_closing: false,
-                        is_self_closing: false,
-                        ..
-                    } if n.eq_ignore_ascii_case(name) => {
-                        // Push the nested same-name opener as a child BEFORE
-                        // incrementing depth so it is visible to
-                        // get_logical_elements (and format_range_inlined can
-                        // recurse into it correctly).
-                        if depth == 1 {
-                            children.push(j);
-                        }
-                        depth += 1;
-                    }
-                    Token::Tag {
-                        name: n,
-                        is_closing: true,
-                        ..
-                    } if n.eq_ignore_ascii_case(name) => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return (children, Some(j));
-                        }
-                    }
-                    _ => {}
-                }
-                if depth == 1 {
-                    children.push(j);
-                }
-                j += 1;
-            }
-            (children, None)
-        }
-        Token::DjangoBlock { raw, .. } => {
-            let tag_name = get_django_tag_name(raw).unwrap_or("");
-            let mut j = index + 1;
-            let mut depth = 1;
-            while j < tokens.len() {
-                if let Token::DjangoBlock { raw: r, .. } = &tokens[j] {
-                    let name = get_django_tag_name(r).unwrap_or("");
-                    if name == tag_name {
-                        depth += 1;
-                    } else if name.starts_with("end") && &name[3..] == tag_name {
-                        depth -= 1;
-                        if depth == 0 {
-                            return (children, Some(j));
-                        }
-                    }
-                }
-                if depth == 1 {
-                    children.push(j);
-                }
-                j += 1;
-            }
-            (children, None)
-        }
-        _ => (children, None),
-    }
-}
-
-fn get_logical_elements(children: &[usize], tokens: &[Token]) -> Vec<std::ops::Range<usize>> {
-    let mut elements = Vec::new();
-    let mut i = 0;
-    while i < children.len() {
-        let idx = children[i];
-        match &tokens[idx] {
-            Token::Tag {
-                name,
-                is_closing: false,
-                is_self_closing: false,
-                ..
-            } => {
-                let start = idx;
-                let mut depth = 1;
-                let tag_name = name.to_lowercase();
-                i += 1;
-                while i < children.len() && depth > 0 {
-                    let next_idx = children[i];
-                    match &tokens[next_idx] {
-                        Token::Tag {
-                            name: n,
-                            is_closing: false,
-                            is_self_closing: false,
-                            ..
-                        } if n.to_lowercase() == tag_name => {
-                            depth += 1;
-                        }
-                        Token::Tag {
-                            name: n,
-                            is_closing: true,
-                            ..
-                        } if n.to_lowercase() == tag_name => {
-                            depth -= 1;
-                        }
-                        _ => {}
-                    }
-                    i += 1;
-                }
-                elements.push(start..children[i - 1] + 1);
-            }
-            Token::DjangoBlock { raw, .. } => {
-                let tag_name = get_django_tag_name(raw).unwrap_or("");
-                let is_block = is_block_tag(tag_name, &[]);
-                let is_closing = tag_name.starts_with("end");
-
-                if is_block && !is_closing {
-                    let start = idx;
-                    let end_tag_name = format!("end{}", tag_name);
-                    let mut depth = 1;
-                    i += 1;
-                    while i < children.len() && depth > 0 {
-                        let next_idx = children[i];
-                        if let Token::DjangoBlock { raw: r, .. } = &tokens[next_idx] {
-                            let name = get_django_tag_name(r).unwrap_or("");
-                            if name == tag_name {
-                                depth += 1;
-                            } else if name == end_tag_name {
-                                depth -= 1;
-                            }
-                        }
-                        i += 1;
-                    }
-                    elements.push(start..children[i - 1] + 1);
-                } else {
-                    elements.push(idx..idx + 1);
-                    i += 1;
-                }
-            }
-            _ => {
-                elements.push(idx..idx + 1);
-                i += 1;
-            }
-        }
-    }
-    elements
-}
-
-fn is_tag_range_inlinable(
-    range: &std::ops::Range<usize>,
-    tokens: &[Token],
-    config: &Config,
-    is_parent_django: bool,
-) -> bool {
-    let token = &tokens[range.start];
-    match token {
-        Token::Tag {
-            name,
-            raw,
-            is_self_closing,
-            ..
-        } => {
-            if raw.contains("{%") || (!is_parent_django && raw.contains("{{")) {
-                return false;
-            }
-            // Check if it's closed. Unclosed inline tags (like <span>
-            // without </span>) are still inlinable — djlint condenses
-            // them as part of the surrounding content.
-            let last_token = &tokens[range.end - 1];
-            let is_properly_closed = if let Token::Tag {
-                name: n,
-                is_closing: true,
-                ..
-            } = last_token
-            {
-                n.to_lowercase() == name.to_lowercase()
-            } else {
-                *is_self_closing
-            };
-
-            if !is_properly_closed && !is_inline_tag(name) {
-                return false;
-            }
-
-            let is_ignored_block = matches!(
-                name.to_lowercase().as_str(),
-                "pre" | "textarea" | "script" | "style"
-            );
-            let formatted = format_tag(
-                name,
-                raw,
-                *is_self_closing,
-                0,
-                0,
-                config,
-                is_ignored_block,
-                false,
-            );
-            if formatted.contains('\n') {
-                return false;
-            }
-        }
-        Token::DjangoBlock { raw, .. } => {
-            if is_parent_django {
-                return false;
-            }
-            let tag_name = get_django_tag_name(raw).unwrap_or("");
-            let is_block = is_block_tag(tag_name, &config.custom_blocks);
-            if is_block {
-                return false;
-            }
-        }
-        _ => {}
-    }
-
-    let children_indices: Vec<usize> = (range.start + 1..range.end - 1).collect();
-    let logical_elements = get_logical_elements(&children_indices, tokens);
-
-    if logical_elements.is_empty() {
-        return true;
-    }
-
-    logical_elements.iter().all(|range| {
-        if range.len() == 1 {
-            is_strictly_inline(&tokens[range.start], config, is_parent_django)
-        } else {
-            // It's a tag pair.
-            let first_token = &tokens[range.start];
-            match first_token {
-                Token::Tag { name: n, .. } => {
-                    is_inline_tag(n)
-                        && is_tag_range_inlinable(range, tokens, config, is_parent_django)
-                }
-                Token::DjangoBlock { .. } => {
-                    is_tag_range_inlinable(range, tokens, config, is_parent_django)
-                }
-                _ => false,
-            }
-        }
-    })
-}
-
-fn format_range_inlined(
-    range: &std::ops::Range<usize>,
-    tokens: &[Token],
-    indent_level: usize,
-    config: &Config,
-) -> String {
-    let mut result = String::new();
-    let mut k = range.start;
-    while k < range.end {
-        let token = &tokens[k];
-        match token {
-            Token::Tag {
-                name,
-                raw,
-                is_closing,
-                is_self_closing,
-                ..
-            } => {
-                let is_ignored_block = matches!(
-                    name.to_lowercase().as_str(),
-                    "pre" | "textarea" | "script" | "style"
-                );
-                if *is_closing {
-                    result.push_str(&format!("</{}>", name));
-                } else {
-                    let (children, closing_idx) = get_children_info(k, tokens);
-                    if let Some(j) = closing_idx {
-                        if range.contains(&j) {
-                            result.push_str(&format_tag(
-                                name,
-                                raw,
-                                *is_self_closing,
-                                indent_level,
-                                indent_level * config.indent,
-                                config,
-                                is_ignored_block,
-                                false,
-                            ));
-                            let sub_elements = get_logical_elements(&children, tokens);
-                            let inner_content = format_range_inlined_joined(
-                                &sub_elements,
-                                tokens,
-                                indent_level,
-                                config,
-                            );
-                            result.push_str(inner_content.trim_end());
-                            result.push_str(&format!("</{}>", name));
-                            k = j;
-                        } else {
-                            result.push_str(&format_tag(
-                                name,
-                                raw,
-                                *is_self_closing,
-                                indent_level,
-                                indent_level * config.indent,
-                                config,
-                                is_ignored_block,
-                                false,
-                            ));
-                        }
-                    } else {
-                        result.push_str(&format_tag(
-                            name,
-                            raw,
-                            *is_self_closing,
-                            indent_level,
-                            indent_level * config.indent,
-                            config,
-                            is_ignored_block,
-                            false,
-                        ));
-                    }
-                }
-            }
-            Token::DjangoVar { raw, .. } | Token::DjangoBlock { raw, .. } => {
-                result.push_str(&normalize_django(raw));
-            }
-            Token::Text { raw, .. } => {
-                if raw.contains('\n') {
-                    result.push_str(raw.trim_matches(|c| c == '\n' || c == '\r'));
-                } else {
-                    result.push_str(raw);
-                }
-            }
-            _ => {
-                result.push_str(token.raw());
-            }
-        }
-        k += 1;
-    }
-    result
-}
-
-fn format_range_inlined_joined(
-    logical_elements: &[std::ops::Range<usize>],
-    tokens: &[Token],
-    indent_level: usize,
-    config: &Config,
-) -> String {
-    let mut content = String::new();
-    for (k, range) in logical_elements.iter().enumerate() {
-        let mut element_content = format_range_inlined(range, tokens, indent_level, config);
-        if k == 0 {
-            element_content = element_content.trim_start_matches(['\n', '\r']).to_string();
-        }
-        if k == logical_elements.len() - 1 {
-            element_content = element_content.trim_end_matches(['\n', '\r']).to_string();
-        }
-        content.push_str(&element_content);
-    }
-    content
-}
