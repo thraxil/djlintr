@@ -1505,7 +1505,7 @@ fn format_tag(
     let attr_re_str = if config.better_attribute_parsing {
         r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})"#
     } else {
-        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|[^\s>]+))?|(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|["'])"#
+        r#"([a-zA-Z0-9:@._#*!-]+(?:\s*=\s*(?:"(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|\{\{[\s\S]*?\}\}|[^\s>]+))?|(?:\{%-?\s*(?:if|for|asyncAll|asyncEach)[^\}]*?%\}(?:[\s\S]*?\{%\s*end(?:if|for|each|all)[^\}]*?-?%\})+?)|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|["'])"#
     };
 
     // In actual implementation we wouldn't want to recompile the regex
@@ -1621,7 +1621,25 @@ fn format_tag(
                     attr_depth.push(depth);
                 }
                 let normalized = normalize_django(raw_attr);
-                whitespace_re.replace_all(&normalized, " ").to_string()
+                let collapsed = whitespace_re.replace_all(&normalized, " ").to_string();
+                // Quote unquoted template-var values: `name={{ ... }}` →
+                // `name="{{ ... }}"`.  djlint's format_attributes does this
+                // when wrapping (the `attrs` list is only used in the
+                // wrapping path, so the non-wrapping output is unaffected).
+                if !is_django_block {
+                    if let Some(eq_pos) = collapsed.find("={{") {
+                        let value_part = collapsed[eq_pos + 1..].trim();
+                        if value_part.starts_with("{{") && value_part.ends_with("}}") {
+                            format!("{}=\"{}\"", &collapsed[..eq_pos], value_part)
+                        } else {
+                            collapsed
+                        }
+                    } else {
+                        collapsed
+                    }
+                } else {
+                    collapsed
+                }
             })
             .collect()
     };
