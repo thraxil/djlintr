@@ -508,9 +508,15 @@ impl<'a> Formatter<'a> {
                 // for such tags because it never sees a matching unindent line.
                 // We mirror this by skipping the indent-stack push so the
                 // parent's closing tag correctly pops its own entry.
+                // An "unclosed orphan" only applies to non-block tags (e.g. SVG
+                // shape elements like <circle> that are not in djlint's
+                // `indent_html_tags`).  Standard HTML block tags like <td> ARE
+                // in that set and always increment — even when unclosed — so we
+                // must NOT suppress their increment here.
                 let is_unclosed_orphan = mismatched_void_close.is_none()
                     && closing_idx.is_none()
                     && !is_self_closing
+                    && !is_html_block_tag(name)
                     && {
                         let mut np = self.pos + 1;
                         while np < self.tokens.len() {

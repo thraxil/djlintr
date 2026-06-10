@@ -1,0 +1,16 @@
+{% block content %}
+    <table>
+        <tbody>
+            {% if False %}
+            {% else %}
+                <tr>
+                    <td>
+                        unclosed
+                        <td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    {% component "foo" %}
+    {% endcomponent %}
+{% endblock content %}
