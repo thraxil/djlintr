@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-10
+
+### Fixed
+
+- **Formatter**: Fixed wrapping of unquoted Django attribute values.
+- **Formatter**: Fixed tag collapse inside nested blocks.
+- **Formatter**: Fixed indentation of unclosed `<td>` elements.
+- **Formatter**: Fixed indentation of unclosed `<pre>` elements.
+- **Formatter**: Fixed line breaks before closing tags in complex nested cases.
+- **Formatter**: Fixed deletion of nested `<span>` elements.
+- **Formatter**: Fixed indentation of inline tags and template variables.
+- **Formatter**: Fixed indentation of `{% elif %}` blocks.
+- **Formatter**: Fixed handling of conditionally unbalanced `<span>` elements.
+- **Formatter**: Fixed `djlint:off` handling.
+- **Formatter**: Fixed closing of multiline attribute lists.
+- **Formatter**: Fixed closing tags for `<textarea>` and `<pre>`.
+- **Formatter**: Fixed attribute wrapping for `<textarea>`.
+- **Formatter**: Line lengths are now measured by character count (Unicode code points) rather than bytes, matching djlint's Python `len()`.
+
+### Changed
+
+- **Formatter**: Split the 2,400-line `formatter/mod.rs` into focused modules (`tag_format`, `tree`, `predicates`) while preserving byte-for-byte output parity. Centralized the per-line indent-tracking invariant into shared helpers and removed dead code.
+
+### Performance
+
+- **Formatter**: Cache `format_tag`'s attribute-matching regex in `OnceLock` statics instead of recompiling it for every tag, cutting the `format_large_template` benchmark from ~3.2s to ~0.12s (~26x).
+
 ## [0.6.0] - 2026-06-06
 
 ### Added
