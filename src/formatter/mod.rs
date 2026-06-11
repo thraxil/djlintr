@@ -559,22 +559,15 @@ impl<'a> Formatter<'a> {
                 let is_ignored_block =
                     matches!(name_lower.as_str(), "pre" | "textarea") && !is_self_closing;
 
-                // djlint wraps textarea attributes when the entire element is
-                // self-contained on one "item" (opening tag and closing tag on
-                // the same source line with no non-whitespace content between
-                // them). In that case it calls format_attributes just like any
-                // other tag. When content follows on a separate line, djlint
-                // treats the opening tag as an ignored-block opener and skips
+                // djlint wraps textarea attributes when the opening and closing
+                // tags are on the same source line (regardless of content).
+                // When the closing tag is on a separate line, djlint treats
+                // the opening tag as an ignored-block opener and skips
                 // format_attributes entirely.
                 let textarea_is_inline = name_lower == "textarea"
                     && !is_self_closing
                     && closing_idx
-                        .map(|j| {
-                            self.tokens[j].line() == token.ends_on_line()
-                                && children.iter().all(|&ci| {
-                                    matches!(&self.tokens[ci], Token::Text { raw, .. } if raw.trim().is_empty())
-                                })
-                        })
+                        .map(|j| self.tokens[j].line() == token.ends_on_line())
                         .unwrap_or(false);
 
                 if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
