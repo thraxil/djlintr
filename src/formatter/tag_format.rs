@@ -257,6 +257,34 @@ pub(crate) fn format_tag(
 
     let raw_attrs_len = raw_attrs_collapsed.trim().len();
 
+    // djlint's expand step breaks block template tags (`{% if %}` …
+    // `{% endif %}`) onto their own indented lines even inside an attribute
+    // value, when the value contains a bare `{`/`}` that is not part of a
+    // template tag (e.g. an Alpine/JS object literal `x-data="{ … }"`). The
+    // bare brace defeats djlint's "is this template tag inside an html tag"
+    // back-scan, so the tag is treated as loose. Such tags also escape
+    // attribute wrapping, so when expansion applies we emit the tag inline
+    // (non-wrapped) with the rewritten, multi-line attribute value.
+    if !is_ignored_block {
+        let inner_indent = " ".repeat((indent_level + 1) * config.indent);
+        if let Some(expanded) =
+            expand_attr_template_blocks(&raw_attrs_collapsed, &inner_indent, config)
+        {
+            let mut formatted = if raw.starts_with("</") {
+                format!("</{}", name)
+            } else {
+                format!("<{}", name)
+            };
+            formatted.push_str(expanded.trim_end());
+            if raw.ends_with("/>") || (is_self_closing && config.close_void_tags) {
+                formatted.push_str(" />");
+            } else {
+                formatted.push('>');
+            }
+            return formatted;
+        }
+    }
+
     let total_line_len =
         (indent_level * config.indent) + name.len() + 1 + raw_attrs_collapsed.len() + 1;
 
@@ -319,6 +347,134 @@ pub(crate) fn format_tag(
     }
 
     formatted
+}
+
+/// Rewrite an attribute string, expanding any quoted value that contains a
+/// "loose" block template tag onto its own indented lines (see the call site
+/// in `format_tag` for the djlint behaviour this mirrors). Returns `None` when
+/// no value qualifies, so callers can fall through to the normal path.
+fn expand_attr_template_blocks(
+    attrs: &str,
+    inner_indent: &str,
+    config: &Config,
+) -> Option<String> {
+    let mut result = String::new();
+    let mut changed = false;
+    let mut rest = attrs;
+    loop {
+        match rest.find(['"', '\'']) {
+            None => {
+                result.push_str(rest);
+                break;
+            }
+            Some(qpos) => {
+                let quote = rest.as_bytes()[qpos] as char;
+                result.push_str(&rest[..qpos]);
+                let after_q = &rest[qpos + 1..];
+                match after_q.find(quote) {
+                    None => {
+                        // Unterminated quote: copy the remainder verbatim.
+                        result.push_str(&rest[qpos..]);
+                        break;
+                    }
+                    Some(endrel) => {
+                        let value = &after_q[..endrel];
+                        result.push(quote);
+                        if let Some(expanded) = expand_attr_value(value, inner_indent, config) {
+                            result.push_str(&expanded);
+                            changed = true;
+                        } else {
+                            result.push_str(value);
+                        }
+                        result.push(quote);
+                        rest = &after_q[endrel + 1..];
+                    }
+                }
+            }
+        }
+    }
+    if changed {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+/// Expand the block template tags inside a single attribute value, but only
+/// when the value contains a bare `{`/`}` (not part of a template tag). A
+/// line break + `inner_indent` is inserted before each block opener and after
+/// each block closer. Returns `None` when no expansion applies.
+fn expand_attr_value(value: &str, inner_indent: &str, config: &Config) -> Option<String> {
+    if !value_has_bare_brace(value) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut any_block = false;
+    let mut rest = value;
+    while let Some(pos) = rest.find("{%") {
+        let Some(endrel) = rest[pos..].find("%}") else {
+            break;
+        };
+        let tag_end = pos + endrel + 2;
+        let tag = &rest[pos..tag_end];
+        let inner = tag[2..tag.len() - 2].trim();
+        let first_word = inner.split_whitespace().next().unwrap_or("");
+        let is_closer = first_word.starts_with("end");
+        let is_block = crate::tags::is_django_block_tag(first_word, &config.custom_blocks);
+
+        out.push_str(&rest[..pos]);
+        if is_block && !is_closer {
+            out.push('\n');
+            out.push_str(inner_indent);
+            out.push_str(tag);
+            any_block = true;
+        } else if is_block && is_closer {
+            out.push_str(tag);
+            out.push('\n');
+            out.push_str(inner_indent);
+            any_block = true;
+        } else {
+            out.push_str(tag);
+        }
+        rest = &rest[tag_end..];
+    }
+    out.push_str(rest);
+    if any_block {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Whether `value` contains a `{` or `}` that is not part of a `{{ }}`,
+/// `{% %}`, or `{# #}` template tag.
+fn value_has_bare_brace(value: &str) -> bool {
+    let mut rest = value;
+    loop {
+        match rest.find(['{', '}']) {
+            None => return false,
+            Some(pos) => {
+                let b = &rest[pos..];
+                if b.starts_with("{{") || b.starts_with("{%") || b.starts_with("{#") {
+                    let close = if b.starts_with("{{") {
+                        "}}"
+                    } else if b.starts_with("{%") {
+                        "%}"
+                    } else {
+                        "#}"
+                    };
+                    match b.find(close) {
+                        Some(e) => rest = &b[e + 2..],
+                        None => return true,
+                    }
+                } else if b.starts_with("}}") || b.starts_with("%}") || b.starts_with("#}") {
+                    rest = &b[2..];
+                } else {
+                    return true;
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn format_style_attribute(attr: &str, indent: &str) -> String {

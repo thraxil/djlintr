@@ -2,7 +2,7 @@ pub mod tokenizer;
 
 use crate::config::Config;
 use crate::tags::{
-    is_condensable_tag, is_html_block_tag, is_inline_tag, is_structural_tag,
+    is_break_html_tag, is_condensable_tag, is_html_block_tag, is_inline_tag, is_structural_tag,
     should_indent_children, should_wrap_attributes,
 };
 use regex::Regex;
@@ -812,10 +812,14 @@ impl<'a> Formatter<'a> {
         let can_collapse = if is_structural {
             false
         } else if is_block_parent {
-            if non_whitespace_elements.is_empty() && is_condensable_tag(name) {
-                true
-            } else if non_whitespace_elements.is_empty() {
-                false
+            if non_whitespace_elements.is_empty() {
+                // An empty element's closing tag stays inline unless djlint's
+                // expand step would break it onto its own line — i.e. the tag
+                // is in break_html_tags and is not pulled back by the condense
+                // step (optional_single_line_html_tags / is_condensable_tag).
+                // Tags like canvas/noscript are block-level but absent from
+                // break_html_tags, so their close stays inline.
+                is_condensable_tag(name) || !is_break_html_tag(name)
             } else {
                 let mut same_line = self.tokens[j].line() == token.line();
                 if same_line {

@@ -193,6 +193,71 @@ pub fn should_indent_children(name: &str) -> bool {
     )
 }
 
+/// HTML tags that djlint's expand step breaks onto their own lines
+/// (the `break_html_tags` setting). Tags NOT in this list (e.g.
+/// `canvas`, `noscript`, `address`, `article`) are never split by
+/// expand, so an empty element's closing tag stays inline with its
+/// opening tag. Void/self-closing elements are included via
+/// `is_void_element`.
+pub fn is_break_html_tag(name: &str) -> bool {
+    if is_void_element(name) {
+        return true;
+    }
+    matches!(
+        name.to_lowercase().as_str(),
+        "html"
+            | "head"
+            | "body"
+            | "div"
+            | "nav"
+            | "ul"
+            | "ol"
+            | "dl"
+            | "dd"
+            | "dt"
+            | "li"
+            | "table"
+            | "thead"
+            | "tbody"
+            | "tr"
+            | "th"
+            | "td"
+            | "blockquote"
+            | "select"
+            | "form"
+            | "option"
+            | "optgroup"
+            | "fieldset"
+            | "legend"
+            | "label"
+            | "header"
+            | "cache"
+            | "main"
+            | "section"
+            | "aside"
+            | "footer"
+            | "figure"
+            | "figcaption"
+            | "video"
+            | "p"
+            | "g"
+            | "svg"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "button"
+            | "path"
+            | "picture"
+            | "script"
+            | "style"
+            | "details"
+            | "summary"
+    )
+}
+
 /// Returns `false` for SVG shape elements whose attributes should
 /// NOT be wrapped.
 pub fn should_wrap_attributes(name: &str) -> bool {
