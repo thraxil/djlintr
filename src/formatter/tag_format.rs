@@ -353,11 +353,7 @@ pub(crate) fn format_tag(
 /// "loose" block template tag onto its own indented lines (see the call site
 /// in `format_tag` for the djlint behaviour this mirrors). Returns `None` when
 /// no value qualifies, so callers can fall through to the normal path.
-fn expand_attr_template_blocks(
-    attrs: &str,
-    inner_indent: &str,
-    config: &Config,
-) -> Option<String> {
+fn expand_attr_template_blocks(attrs: &str, inner_indent: &str, config: &Config) -> Option<String> {
     let mut result = String::new();
     let mut changed = false;
     let mut rest = attrs;
