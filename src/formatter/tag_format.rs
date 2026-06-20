@@ -258,17 +258,21 @@ pub(crate) fn format_tag(
     let raw_attrs_len = raw_attrs_collapsed.trim().len();
 
     // djlint's expand step breaks block template tags (`{% if %}` …
-    // `{% endif %}`) onto their own indented lines even inside an attribute
-    // value, when the value contains a bare `{`/`}` that is not part of a
-    // template tag (e.g. an Alpine/JS object literal `x-data="{ … }"`). The
-    // bare brace defeats djlint's "is this template tag inside an html tag"
-    // back-scan, so the tag is treated as loose. Such tags also escape
-    // attribute wrapping, so when expansion applies we emit the tag inline
-    // (non-wrapped) with the rewritten, multi-line attribute value.
+    // `{% endif %}`) onto their own indented lines inside an attribute value
+    // when the value's enclosing tag is not in `indent_html_tags` (e.g. an SVG
+    // `<rect>`), or when the value contains a bare `{`/`}` that is not part of
+    // a template tag (e.g. an Alpine/JS object literal `x-data="{ … }"`). Both
+    // defeat djlint's "is this template tag inside an html tag" back-scan, so
+    // the tag is treated as loose. Such tags also escape attribute wrapping,
+    // so when expansion applies we emit the tag inline (non-wrapped) with the
+    // rewritten, multi-line attribute value.
     if !is_ignored_block {
-        let inner_indent = " ".repeat((indent_level + 1) * config.indent);
+        let tag_in_indent = crate::tags::is_indent_html_tag(name);
+        // Lines inside the value sit one level deeper than the tag only when
+        // the tag itself increments indentation (it is in indent_html_tags).
+        let base_level = indent_level + usize::from(tag_in_indent);
         if let Some(expanded) =
-            expand_attr_template_blocks(&raw_attrs_collapsed, &inner_indent, config)
+            expand_attr_template_blocks(&raw_attrs_collapsed, base_level, !tag_in_indent, config)
         {
             let mut formatted = if raw.starts_with("</") {
                 format!("</{}", name)
@@ -351,9 +355,16 @@ pub(crate) fn format_tag(
 
 /// Rewrite an attribute string, expanding any quoted value that contains a
 /// "loose" block template tag onto its own indented lines (see the call site
-/// in `format_tag` for the djlint behaviour this mirrors). Returns `None` when
-/// no value qualifies, so callers can fall through to the normal path.
-fn expand_attr_template_blocks(attrs: &str, inner_indent: &str, config: &Config) -> Option<String> {
+/// in `format_tag` for the djlint behaviour this mirrors). `base_level` is the
+/// indent level for the value's top-level lines; `always` forces expansion
+/// even without a bare brace (used when the enclosing tag is not in
+/// `indent_html_tags`). Returns `None` when no value qualifies.
+fn expand_attr_template_blocks(
+    attrs: &str,
+    base_level: usize,
+    always: bool,
+    config: &Config,
+) -> Option<String> {
     let mut result = String::new();
     let mut changed = false;
     let mut rest = attrs;
@@ -376,7 +387,8 @@ fn expand_attr_template_blocks(attrs: &str, inner_indent: &str, config: &Config)
                     Some(endrel) => {
                         let value = &after_q[..endrel];
                         result.push(quote);
-                        if let Some(expanded) = expand_attr_value(value, inner_indent, config) {
+                        if let Some(expanded) = expand_attr_value(value, base_level, always, config)
+                        {
                             result.push_str(&expanded);
                             changed = true;
                         } else {
@@ -396,17 +408,50 @@ fn expand_attr_template_blocks(attrs: &str, inner_indent: &str, config: &Config)
     }
 }
 
-/// Expand the block template tags inside a single attribute value, but only
-/// when the value contains a bare `{`/`}` (not part of a template tag). A
-/// line break + `inner_indent` is inserted before each block opener and after
-/// each block closer. Returns `None` when no expansion applies.
-fn expand_attr_value(value: &str, inner_indent: &str, config: &Config) -> Option<String> {
-    if !value_has_bare_brace(value) {
+/// One rendered line of an expanded attribute value: its indent `level` and
+/// its (already-trimmed) text content.
+struct AttrLine {
+    level: usize,
+    text: String,
+}
+
+/// Expand the block template tags inside a single attribute value. Mirrors
+/// djlint's expand → indent → condense for the value: each block tag goes on
+/// its own line (openers increment indent, closers decrement), text between
+/// tags is indented one level deeper, and a simple `{% if %}…{% endif %}`
+/// block with a single text child and no `{% else %}`/nested tags is rejoined
+/// onto one line. Returns `None` when no block template tag qualifies.
+fn expand_attr_value(
+    value: &str,
+    base_level: usize,
+    always: bool,
+    config: &Config,
+) -> Option<String> {
+    if !always && !value_has_bare_brace(value) {
         return None;
     }
-    let mut out = String::new();
+
+    // The leading text (before the first block tag) stays on the tag's line.
+    let mut head = String::new();
+    let mut head_done = false;
+    let mut lines: Vec<AttrLine> = Vec::new();
+    let mut level = base_level;
     let mut any_block = false;
+    // Text accumulated since the last block tag (or value start).
+    let mut pending = String::new();
     let mut rest = value;
+
+    let flush_pending = |pending: &mut String, lines: &mut Vec<AttrLine>, level: usize| {
+        let t = pending.trim();
+        if !t.is_empty() {
+            lines.push(AttrLine {
+                level,
+                text: t.to_string(),
+            });
+        }
+        pending.clear();
+    };
+
     while let Some(pos) = rest.find("{%") {
         let Some(endrel) = rest[pos..].find("%}") else {
             break;
@@ -416,30 +461,141 @@ fn expand_attr_value(value: &str, inner_indent: &str, config: &Config) -> Option
         let inner = tag[2..tag.len() - 2].trim();
         let first_word = inner.split_whitespace().next().unwrap_or("");
         let is_closer = first_word.starts_with("end");
-        let is_block = crate::tags::is_django_block_tag(first_word, &config.custom_blocks);
+        let is_middle = matches!(first_word, "else" | "elif" | "empty");
+        let is_block =
+            crate::tags::is_django_block_tag(first_word, &config.custom_blocks) || is_middle;
 
-        out.push_str(&rest[..pos]);
-        if is_block && !is_closer {
-            out.push('\n');
-            out.push_str(inner_indent);
-            out.push_str(tag);
-            any_block = true;
-        } else if is_block && is_closer {
-            out.push_str(tag);
-            out.push('\n');
-            out.push_str(inner_indent);
-            any_block = true;
+        pending.push_str(&rest[..pos]);
+        if !is_block {
+            // Not a structural tag (e.g. `{% url %}`, `{% trans %}`): keep it
+            // inline with the surrounding text.
+            pending.push_str(tag);
+            rest = &rest[tag_end..];
+            continue;
+        }
+
+        any_block = true;
+        if !head_done {
+            head = pending.trim_end().to_string();
+            pending.clear();
+            head_done = true;
         } else {
-            out.push_str(tag);
+            flush_pending(&mut pending, &mut lines, level);
+        }
+
+        if is_closer {
+            level = level.saturating_sub(1);
+            lines.push(AttrLine {
+                level,
+                text: tag.to_string(),
+            });
+        } else if is_middle {
+            lines.push(AttrLine {
+                level: level.saturating_sub(1),
+                text: tag.to_string(),
+            });
+        } else {
+            lines.push(AttrLine {
+                level,
+                text: tag.to_string(),
+            });
+            level += 1;
         }
         rest = &rest[tag_end..];
     }
-    out.push_str(rest);
-    if any_block {
-        Some(out)
-    } else {
-        None
+
+    if !any_block {
+        return None;
     }
+
+    pending.push_str(rest);
+    if !head_done {
+        head = pending.trim_end().to_string();
+    } else {
+        flush_pending(&mut pending, &mut lines, level);
+    }
+
+    condense_attr_lines(&mut lines);
+
+    // Render: head stays on the tag line; each remaining line gets a newline
+    // and absolute indentation.
+    let mut out = head;
+    for line in &lines {
+        out.push('\n');
+        out.push_str(&" ".repeat(line.level * config.indent));
+        out.push_str(&line.text);
+    }
+    Some(out)
+}
+
+/// Rejoin `{% if %}` … `{% endif %}` blocks that contain a single text child
+/// and no intermediate template tags onto one line, matching djlint's
+/// condense step (which leaves `{% else %}`/nested blocks expanded).
+fn condense_attr_lines(lines: &mut Vec<AttrLine>) {
+    let mut i = 0;
+    while i < lines.len() {
+        let is_opener = is_block_opener_line(&lines[i].text);
+        if is_opener {
+            // opener directly followed by its closer (empty body)
+            if i + 1 < lines.len() && is_block_closer_line(&lines[i + 1].text) {
+                let merged = format!("{}{}", lines[i].text, lines[i + 1].text);
+                let level = lines[i].level;
+                lines.splice(
+                    i..i + 2,
+                    [AttrLine {
+                        level,
+                        text: merged,
+                    }],
+                );
+                continue;
+            }
+            // opener, one text child, closer
+            if i + 2 < lines.len()
+                && !is_template_tag_line(&lines[i + 1].text)
+                && is_block_closer_line(&lines[i + 2].text)
+            {
+                let merged = format!(
+                    "{}{}{}",
+                    lines[i].text,
+                    lines[i + 1].text,
+                    lines[i + 2].text
+                );
+                let level = lines[i].level;
+                lines.splice(
+                    i..i + 3,
+                    [AttrLine {
+                        level,
+                        text: merged,
+                    }],
+                );
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+fn is_template_tag_line(text: &str) -> bool {
+    text.starts_with("{%") && text.ends_with("%}")
+}
+
+fn is_block_opener_line(text: &str) -> bool {
+    is_template_tag_line(text) && {
+        let word = text[2..text.len() - 2]
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        !word.starts_with("end") && !matches!(word, "else" | "elif" | "empty")
+    }
+}
+
+fn is_block_closer_line(text: &str) -> bool {
+    is_template_tag_line(text)
+        && text[2..text.len() - 2]
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .starts_with("end")
 }
 
 /// Whether `value` contains a `{` or `}` that is not part of a `{{ }}`,
