@@ -15,7 +15,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -29,7 +29,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Rust Cache
@@ -41,7 +41,7 @@ jobs:
     name: Linter Parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Rust Cache
@@ -80,7 +80,7 @@ jobs:
             artifact_name: djlintr-windows-amd64.exe
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
