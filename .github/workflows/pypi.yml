@@ -4,6 +4,9 @@ on:
   push:
     tags: [ 'v*' ]
 
+permissions:
+  contents: read
+
 jobs:
   build-wheels:
     name: Build Wheels (${{ matrix.target }})
