@@ -478,6 +478,20 @@ impl<'a> Formatter<'a> {
                         self.push_indent();
                     }
                     self.push_content(raw);
+                    // When the `{# djlint:off #}` marker sits on a *later* line
+                    // than the tag's opening (e.g. `<a class="x"` then a newline
+                    // then the marker), djlint processes that opening-tag line
+                    // normally and an `indent_html_tags` opener increments the
+                    // indent.  The matching close is then consumed verbatim
+                    // inside the off block, so the increment is never reversed
+                    // and "leaks" one level — which we mirror here.  When the
+                    // marker is on the opener's own line (e.g.
+                    // `<div {# djlint:off #}>`), djlint never counts the
+                    // increment, so we leave the indent untouched.
+                    let off_pos = raw.find("djlint:off").unwrap_or(0);
+                    if raw[..off_pos].contains('\n') && crate::tags::is_indent_html_tag(name) {
+                        self.indent_level += 1;
+                    }
                     self.formatting_enabled = false;
                     self.at_start_of_line = false;
                     return;
