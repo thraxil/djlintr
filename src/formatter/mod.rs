@@ -117,6 +117,31 @@ fn find_poison_closers(tokens: &[Token<'_>]) -> Vec<(usize, String)> {
     out
 }
 
+/// djlint disposition of a `{# djlint:off #}` marker found inside an opening
+/// tag's attributes. Computed once from the tag's raw text so the two handling
+/// paths can't drift apart on independent substring checks.
+enum OffRegion {
+    /// No off marker — handle the tag normally.
+    None,
+    /// A complete `{# djlint:off #}` … `{# djlint:on #}` region: emit the tag
+    /// preserving its source line breaks, then handle content/close normally.
+    SelfContained,
+    /// `{# djlint:off #}` with no matching `{# djlint:on #}` in the tag: the
+    /// off region extends past the tag, so emit verbatim and disable formatting
+    /// until a later `{# djlint:on #}`.
+    Opens,
+}
+
+fn off_region_in_tag(raw: &str) -> OffRegion {
+    if !raw.contains("djlint:off") {
+        OffRegion::None
+    } else if raw.contains("djlint:on") {
+        OffRegion::SelfContained
+    } else {
+        OffRegion::Opens
+    }
+}
+
 struct Formatter<'a> {
     config: &'a Config,
     output: String,
@@ -190,6 +215,96 @@ impl<'a> Formatter<'a> {
         self.poison_closers
             .iter()
             .any(|(pos, t)| *pos < self.pos && *t == text)
+    }
+
+    /// Whether the current whitespace-only text token sits between inline
+    /// content and a poisoned closer (e.g. the `  ` in `</a>  {% endif %}`).
+    /// djlint keeps the closer on that line, so the spacing must be preserved
+    /// instead of being dropped as inter-tag whitespace.
+    fn is_space_before_poisoned_closer(&self, raw: &str) -> bool {
+        raw.trim().is_empty()
+            && !self.at_start_of_line
+            && !raw.contains('\n')
+            && self.pos + 1 < self.tokens.len()
+            && matches!(&self.tokens[self.pos + 1], Token::DjangoBlock { .. })
+            && self.is_poisoned_closer(self.tokens[self.pos + 1].raw())
+    }
+
+    /// Emit an opening tag that carries a `{# djlint:off #}` marker in its
+    /// attributes. Returns `true` when handled here (caller should stop),
+    /// `false` to fall through to normal tag handling. See `OffRegion`.
+    fn try_emit_djlint_off_open_tag(&mut self, name: &str, raw: &str) -> bool {
+        let region = off_region_in_tag(raw);
+        if matches!(region, OffRegion::None) {
+            return false;
+        }
+
+        // Shared preamble: a block tag mid-line starts a fresh line, then indent.
+        if !self.at_start_of_line && is_html_block_tag(name) {
+            self.trim_and_newline();
+        }
+        if self.at_start_of_line {
+            self.push_indent();
+        }
+
+        match region {
+            OffRegion::None => unreachable!(),
+            OffRegion::SelfContained => {
+                // Preserve the source line breaks: lines strictly between the
+                // markers stay verbatim; every other line (marker lines, the
+                // closing `>`, other attributes) is re-indented one level deeper
+                // than the tag.
+                let cont_indent = " ".repeat((self.indent_level + 1) * self.config.indent);
+                let mut in_off = false;
+                for (i, line) in raw.split('\n').enumerate() {
+                    if i == 0 {
+                        self.push_content(line);
+                        continue;
+                    }
+                    self.push_newline();
+                    let stripped = line.trim_start();
+                    if in_off && !stripped.starts_with("{# djlint:on") {
+                        self.output.push_str(line);
+                    } else {
+                        self.output.push_str(&cont_indent);
+                        self.output.push_str(stripped.trim_end());
+                        if stripped.starts_with("{# djlint:off") {
+                            in_off = true;
+                        } else if stripped.starts_with("{# djlint:on") {
+                            in_off = false;
+                        }
+                    }
+                }
+                self.at_start_of_line = false;
+                // The tag opened normally: newline before its content, increment,
+                // and track the parent so the matching close decrements.
+                self.trim_and_newline();
+                let incremented = if should_indent_children(name) {
+                    self.increment_indent(true)
+                } else {
+                    false
+                };
+                self.parent_stack.push((self.pos, incremented, true, false));
+            }
+            OffRegion::Opens => {
+                self.push_content(raw);
+                // When the marker sits on a *later* line than the tag's opening
+                // (e.g. `<a class="x"` then a newline then the marker), djlint
+                // processes that opening-tag line normally and an
+                // `indent_html_tags` opener increments the indent. The matching
+                // close is then consumed verbatim inside the off block, so the
+                // increment is never reversed and "leaks" one level. When the
+                // marker is on the opener's own line (e.g.
+                // `<div {# djlint:off #}>`), djlint never counts the increment.
+                let off_pos = raw.find("djlint:off").unwrap_or(0);
+                if raw[..off_pos].contains('\n') && crate::tags::is_indent_html_tag(name) {
+                    self.indent_level += 1;
+                }
+                self.formatting_enabled = false;
+                self.at_start_of_line = false;
+            }
+        }
+        true
     }
 
     /// Increment the indent level, honoring djlint's "at most one indent
@@ -555,92 +670,10 @@ impl<'a> Formatter<'a> {
                     is_inline_tag(name) && !is_break_before_close_tag(name),
                 );
             } else {
-                // djlint checks for "djlint:off" in every item *before*
-                // formatting.  When it fires on an opening tag (e.g.
-                // `<div {# djlint:off #}>`), the tag is emitted verbatim
-                // and indent tracking is skipped entirely — no indent
-                // increment, no parent_stack push.  Subsequent tokens are
-                // then emitted raw until a "djlint:on" token re-enables
-                // formatting (at whatever indent_level is current, which
-                // stays at whatever it was before this tag since it was
-                // never incremented).
-                // A self-contained `{# djlint:off #}` … `{# djlint:on #}`
-                // region inside the opening tag's attributes. djlint does NOT
-                // collapse/wrap such a tag: it preserves the source line
-                // breaks. Lines strictly between the two markers are kept
-                // verbatim; every other line (the marker lines, the closing
-                // `>`, and any other attributes) is re-indented one level
-                // deeper than the tag. The element's content and close tag are
-                // then handled normally.
-                if !is_self_closing && raw.contains("djlint:off") && raw.contains("djlint:on") {
-                    if !self.at_start_of_line && is_html_block_tag(name) {
-                        self.trim_and_newline();
-                    }
-                    if self.at_start_of_line {
-                        self.push_indent();
-                    }
-                    let cont_indent = " ".repeat((self.indent_level + 1) * self.config.indent);
-                    let mut in_off = false;
-                    for (i, line) in raw.split('\n').enumerate() {
-                        if i == 0 {
-                            self.push_content(line);
-                            continue;
-                        }
-                        self.output.push('\n');
-                        self.output_line_index += 1;
-                        let stripped = line.trim_start();
-                        if in_off && !stripped.starts_with("{# djlint:on") {
-                            // Verbatim line inside the off region: keep the
-                            // original leading whitespace untouched.
-                            self.output.push_str(line);
-                        } else {
-                            self.output.push_str(&cont_indent);
-                            self.output.push_str(stripped.trim_end());
-                            if stripped.starts_with("{# djlint:off") {
-                                in_off = true;
-                            } else if stripped.starts_with("{# djlint:on") {
-                                in_off = false;
-                            }
-                        }
-                    }
-                    self.at_start_of_line = false;
-                    // The tag opened normally: emit a newline before its
-                    // content, increment, and track the parent so the matching
-                    // close decrements.
-                    self.trim_and_newline();
-                    let incremented = if should_indent_children(name) {
-                        self.increment_indent(true)
-                    } else {
-                        false
-                    };
-                    self.parent_stack.push((self.pos, incremented, true, false));
-                    return;
-                }
-
-                if !is_self_closing && raw.contains("djlint:off") && !raw.contains("djlint:on") {
-                    if !self.at_start_of_line && is_html_block_tag(name) {
-                        self.trim_and_newline();
-                    }
-                    if self.at_start_of_line {
-                        self.push_indent();
-                    }
-                    self.push_content(raw);
-                    // When the `{# djlint:off #}` marker sits on a *later* line
-                    // than the tag's opening (e.g. `<a class="x"` then a newline
-                    // then the marker), djlint processes that opening-tag line
-                    // normally and an `indent_html_tags` opener increments the
-                    // indent.  The matching close is then consumed verbatim
-                    // inside the off block, so the increment is never reversed
-                    // and "leaks" one level — which we mirror here.  When the
-                    // marker is on the opener's own line (e.g.
-                    // `<div {# djlint:off #}>`), djlint never counts the
-                    // increment, so we leave the indent untouched.
-                    let off_pos = raw.find("djlint:off").unwrap_or(0);
-                    if raw[..off_pos].contains('\n') && crate::tags::is_indent_html_tag(name) {
-                        self.indent_level += 1;
-                    }
-                    self.formatting_enabled = false;
-                    self.at_start_of_line = false;
+                // A `{# djlint:off #}` marker inside an opening tag's
+                // attributes is handled out-of-line (see `OffRegion`); a
+                // self-closing tag never matches, matching djlint.
+                if !is_self_closing && self.try_emit_djlint_off_open_tag(name, raw) {
                     return;
                 }
 
@@ -1171,13 +1204,7 @@ impl<'a> Formatter<'a> {
             // Whitespace separating inline content from a poisoned closer (e.g.
             // the `  ` in `</a>  {% endif %}`) is normally dropped, but djlint
             // keeps the closer on that line, so preserve the original spacing.
-            if trimmed.is_empty()
-                && !self.at_start_of_line
-                && !raw.contains('\n')
-                && self.pos + 1 < self.tokens.len()
-                && matches!(&self.tokens[self.pos + 1], Token::DjangoBlock { .. })
-                && self.is_poisoned_closer(self.tokens[self.pos + 1].raw())
-            {
+            if self.is_space_before_poisoned_closer(raw) {
                 self.push_content(raw);
                 return;
             }
