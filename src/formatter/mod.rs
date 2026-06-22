@@ -45,6 +45,78 @@ fn find_unclosed_verbatim_positions(tokens: &[Token<'_>]) -> std::collections::H
     open_stack.into_iter().map(|(pos, _)| pos).collect()
 }
 
+/// Whether a tag's raw text contains an unquoted `{{ … }}` attribute value
+/// (e.g. `<div id={{ x }} …>`). djlint's "break after an html tag" regex
+/// matches an unquoted attribute value with `{[^}]*}`, which consumes only the
+/// first `}` of `}}` and leaves a stray `}` — so the tag fails to match and the
+/// content after `>` is never broken onto its own line. (Quoted `{{ }}` and
+/// unquoted `{% %}` do not trip this.) We mirror that by keeping such a tag's
+/// source-inline content on the opening tag's line.
+fn has_unquoted_double_brace(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(q) => {
+                if b == q {
+                    quote = None;
+                }
+            }
+            None => {
+                if b == b'"' || b == b'\'' {
+                    quote = Some(b);
+                } else if b == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Pre-scan for djlint's "template tag inside a tag's attributes poisons the
+/// global move-decision" quirk.  djlint's expand step decides whether to break
+/// a template tag (`{% endif %}` …) onto its own line by searching the whole
+/// document so far for `<indent_html_tag … {% sametag %}$`.  When an opening
+/// `indent_html_tags` tag carries a template block tag at the end of one of its
+/// attribute lines (e.g. inside a `{# djlint:off #}` region), that search
+/// matches for every *later* occurrence of the same tag text — so djlint stops
+/// breaking those tags onto their own line.  We mirror this by recording, for
+/// each such tag, its token position and the normalised text of the embedded
+/// template tags, then keeping a matching inline closer attached to its line.
+fn find_poison_closers(tokens: &[Token<'_>]) -> Vec<(usize, String)> {
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let tag_re = BLOCK_RE.get_or_init(|| Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap());
+    for (i, token) in tokens.iter().enumerate() {
+        if let Token::Tag {
+            name,
+            raw,
+            is_closing: false,
+            is_self_closing: false,
+            ..
+        } = token
+        {
+            if !crate::tags::is_indent_html_tag(name) {
+                continue;
+            }
+            // A template tag counts only if it sits at the end of a line within
+            // the opening tag (followed by optional spaces then a newline),
+            // mirroring djlint's `… %}$` anchor.
+            for m in tag_re.find_iter(raw) {
+                let after = &raw[m.end()..];
+                let trimmed = after.trim_start_matches([' ', '\t']);
+                if trimmed.starts_with('\n') || trimmed.starts_with("\r\n") {
+                    out.push((i, normalize_django(m.as_str())));
+                }
+            }
+        }
+    }
+    out
+}
+
 struct Formatter<'a> {
     config: &'a Config,
     output: String,
@@ -59,6 +131,11 @@ struct Formatter<'a> {
     verbatim_is_unclosed: bool,
     /// Positions (in `tokens`) of verbatim-tag opens that have no matching close.
     unclosed_verbatim_positions: std::collections::HashSet<usize>,
+    /// (token_pos, normalized_template_tag_text) of template tags embedded at a
+    /// line end inside an opening tag's attributes. See `find_poison_closers`:
+    /// a later closing template tag with the same text is kept inline rather
+    /// than broken onto its own line.
+    poison_closers: Vec<(usize, String)>,
     at_start_of_line: bool,
     /// Stack of (token_pos, incremented, tag_was_wrapped, was_inline_mid_line).
     parent_stack: Vec<(usize, bool, bool, bool)>,
@@ -73,6 +150,7 @@ impl<'a> Formatter<'a> {
     fn new(config: &'a Config, source: &'a str) -> Self {
         let tokens: Vec<Token> = Tokenizer::new(source).collect();
         let unclosed_verbatim_positions = find_unclosed_verbatim_positions(&tokens);
+        let poison_closers = find_poison_closers(&tokens);
         Self {
             config,
             output: String::new(),
@@ -83,6 +161,7 @@ impl<'a> Formatter<'a> {
             verbatim_tags: Vec::new(),
             verbatim_is_unclosed: false,
             unclosed_verbatim_positions,
+            poison_closers,
             at_start_of_line: true,
             parent_stack: Vec::new(),
             last_increment_line: None,
@@ -96,6 +175,21 @@ impl<'a> Formatter<'a> {
         self.output.push('\n');
         self.output_line_index += 1;
         self.at_start_of_line = true;
+    }
+
+    /// Whether the closing template tag at the current position is "poisoned"
+    /// (see `find_poison_closers`): an earlier opening tag embedded a template
+    /// tag with the same normalised text at a line end inside its attributes.
+    /// When so, djlint keeps this closer attached to the preceding inline
+    /// content rather than breaking it onto its own line.
+    fn is_poisoned_closer(&self, raw: &str) -> bool {
+        if self.poison_closers.is_empty() {
+            return false;
+        }
+        let text = normalize_django(raw);
+        self.poison_closers
+            .iter()
+            .any(|(pos, t)| *pos < self.pos && *t == text)
     }
 
     /// Increment the indent level, honoring djlint's "at most one indent
@@ -470,6 +564,59 @@ impl<'a> Formatter<'a> {
                 // formatting (at whatever indent_level is current, which
                 // stays at whatever it was before this tag since it was
                 // never incremented).
+                // A self-contained `{# djlint:off #}` … `{# djlint:on #}`
+                // region inside the opening tag's attributes. djlint does NOT
+                // collapse/wrap such a tag: it preserves the source line
+                // breaks. Lines strictly between the two markers are kept
+                // verbatim; every other line (the marker lines, the closing
+                // `>`, and any other attributes) is re-indented one level
+                // deeper than the tag. The element's content and close tag are
+                // then handled normally.
+                if !is_self_closing && raw.contains("djlint:off") && raw.contains("djlint:on") {
+                    if !self.at_start_of_line && is_html_block_tag(name) {
+                        self.trim_and_newline();
+                    }
+                    if self.at_start_of_line {
+                        self.push_indent();
+                    }
+                    let cont_indent = " ".repeat((self.indent_level + 1) * self.config.indent);
+                    let mut in_off = false;
+                    for (i, line) in raw.split('\n').enumerate() {
+                        if i == 0 {
+                            self.push_content(line);
+                            continue;
+                        }
+                        self.output.push('\n');
+                        self.output_line_index += 1;
+                        let stripped = line.trim_start();
+                        if in_off && !stripped.starts_with("{# djlint:on") {
+                            // Verbatim line inside the off region: keep the
+                            // original leading whitespace untouched.
+                            self.output.push_str(line);
+                        } else {
+                            self.output.push_str(&cont_indent);
+                            self.output.push_str(stripped.trim_end());
+                            if stripped.starts_with("{# djlint:off") {
+                                in_off = true;
+                            } else if stripped.starts_with("{# djlint:on") {
+                                in_off = false;
+                            }
+                        }
+                    }
+                    self.at_start_of_line = false;
+                    // The tag opened normally: emit a newline before its
+                    // content, increment, and track the parent so the matching
+                    // close decrements.
+                    self.trim_and_newline();
+                    let incremented = if should_indent_children(name) {
+                        self.increment_indent(true)
+                    } else {
+                        false
+                    };
+                    self.parent_stack.push((self.pos, incremented, true, false));
+                    return;
+                }
+
                 if !is_self_closing && raw.contains("djlint:off") && !raw.contains("djlint:on") {
                     if !self.at_start_of_line && is_html_block_tag(name) {
                         self.trim_and_newline();
@@ -682,9 +829,17 @@ impl<'a> Formatter<'a> {
                         // non-wrapped tags that are inline or non-block.
                         // However, inline tags like <a> should NOT be forced
                         // to wrap their content just because their attributes wrapped.
+                        // A tag with an unquoted `{{ … }}` attribute also keeps
+                        // its source-inline content on the opening tag's line:
+                        // djlint's break-after regex can't match such a tag (see
+                        // `has_unquoted_double_brace`). The same-line check in
+                        // `should_continue_inline` still gates this.
+                        let unquoted_double_brace = has_unquoted_double_brace(raw);
                         let inline_guard = !is_structural_tag(name)
-                            && (!tag_was_wrapped || is_inline_tag(name))
-                            && (is_inline_tag(name) || !is_html_block_tag(name));
+                            && (!tag_was_wrapped || is_inline_tag(name) || unquoted_double_brace)
+                            && (is_inline_tag(name)
+                                || !is_html_block_tag(name)
+                                || unquoted_double_brace);
                         self.emit_newline_or_continue(token, inline_guard);
                     } else {
                         self.at_start_of_line =
@@ -1013,6 +1168,19 @@ impl<'a> Formatter<'a> {
             // tracks this correctly based on the content's newlines.
         } else {
             let trimmed = raw.trim();
+            // Whitespace separating inline content from a poisoned closer (e.g.
+            // the `  ` in `</a>  {% endif %}`) is normally dropped, but djlint
+            // keeps the closer on that line, so preserve the original spacing.
+            if trimmed.is_empty()
+                && !self.at_start_of_line
+                && !raw.contains('\n')
+                && self.pos + 1 < self.tokens.len()
+                && matches!(&self.tokens[self.pos + 1], Token::DjangoBlock { .. })
+                && self.is_poisoned_closer(self.tokens[self.pos + 1].raw())
+            {
+                self.push_content(raw);
+                return;
+            }
             if !trimmed.is_empty() {
                 let lines: Vec<&str> = trimmed.lines().collect();
                 let mut blank_lines = 0;
@@ -1240,15 +1408,30 @@ impl<'a> Formatter<'a> {
                 return;
             }
 
+            // A poisoned closer (e.g. `{% endif %}` after `</a>` on the same
+            // source line) stays attached to the preceding inline content
+            // instead of being broken onto its own line — matching djlint's
+            // global move-decision quirk (see `find_poison_closers`). djlint
+            // also never reverses the matching opener's indent in this case, so
+            // the indent "leaks" one level: pop the parent but skip the
+            // decrement.
+            let poisoned_inline =
+                is_closing && is_block && !self.at_start_of_line && self.is_poisoned_closer(raw);
+
             if (is_closing && is_block) || is_reindent {
                 self.parent_stack.pop();
-                self.decrement_indent();
+                if !poisoned_inline {
+                    self.decrement_indent();
+                }
             }
 
             // Check if we can inline
             let mut did_collapse = false;
 
-            if !self.at_start_of_line && (is_block || is_reindent || is_line_break) {
+            if !poisoned_inline
+                && !self.at_start_of_line
+                && (is_block || is_reindent || is_line_break)
+            {
                 self.trim_and_newline();
             }
 

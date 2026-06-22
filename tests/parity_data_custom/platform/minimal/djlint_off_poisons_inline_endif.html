@@ -1,0 +1,16 @@
+<div id="x"
+     {# djlint:off #}
+     {% if a %}
+     {% endif %}
+     {# djlint:on #}
+     >
+    <table>
+        <tr>
+            <td>
+                {{ topic }}
+                {% if y %}
+                    <a href="{% url 'some:very_long_url_name_here' topic.id %}">View the topic summary now</a>  {% endif %}
+            </td>
+        </tr>
+    </table>
+</div>
