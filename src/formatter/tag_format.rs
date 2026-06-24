@@ -7,6 +7,11 @@ pub(crate) static DJANGO_ATTR_AFTER_RE: OnceLock<Regex> = OnceLock::new();
 pub(crate) static DJANGO_ATTR_BEFORE_RE: OnceLock<Regex> = OnceLock::new();
 pub(crate) static ATTR_RE: OnceLock<Regex> = OnceLock::new();
 pub(crate) static ATTR_RE_BETTER: OnceLock<Regex> = OnceLock::new();
+/// A whitespace run that contains at least one newline. djlint's compress
+/// step folds such runs (newline + indentation) to a single space, but leaves
+/// pure space/tab runs inside attribute values untouched — so `class="a  b"`
+/// keeps its double space while `class="a\n  b"` becomes `class="a b"`.
+static ATTR_NEWLINE_WS_RE: OnceLock<Regex> = OnceLock::new();
 
 /// The attribute-matching regex used by `format_tag`.  There are only two
 /// variants (selected by `better_attribute_parsing`), so each is compiled
@@ -42,6 +47,9 @@ pub(crate) fn format_tag(
 ) -> String {
     let attr_re = attribute_regex(config.better_attribute_parsing);
     let whitespace_re = WHITESPACE_RE.get_or_init(|| Regex::new(r#"\s+"#).unwrap());
+    // Used for attribute content: collapse only newline-containing runs (see
+    // `ATTR_NEWLINE_WS_RE`), preserving author-intended double spaces.
+    let attr_ws_re = ATTR_NEWLINE_WS_RE.get_or_init(|| Regex::new(r#"\s*[\r\n]\s*"#).unwrap());
 
     let start_pos = if raw.starts_with("</") {
         2 + name.len()
@@ -150,7 +158,7 @@ pub(crate) fn format_tag(
                     attr_depth.push(depth);
                 }
                 let normalized = normalize_django(raw_attr);
-                let collapsed = whitespace_re.replace_all(&normalized, " ").to_string();
+                let collapsed = attr_ws_re.replace_all(&normalized, " ").to_string();
                 // Quote unquoted template-var values: `name={{ ... }}` →
                 // `name="{{ ... }}"`.  djlint's format_attributes does this
                 // when wrapping (the `attrs` list is only used in the
@@ -231,10 +239,12 @@ pub(crate) fn format_tag(
         raw_final_content.push_str(filler);
     }
 
-    // Collapse whitespace (e.g., multi-line attributes) to single spaces.
-    // This string preserves style attribute values as-is (including trailing
-    // semicolons), matching djlint which only reformats style when wrapping.
-    let raw_attrs_collapsed = whitespace_re.replace_all(&raw_final_content, " ");
+    // Fold newline-containing whitespace runs (e.g. multi-line attributes) to
+    // single spaces, but preserve author-intended double spaces within values
+    // (djlint only naturalises line breaks). This string preserves style
+    // attribute values as-is (including trailing semicolons), matching djlint
+    // which only reformats style when wrapping.
+    let raw_attrs_collapsed = attr_ws_re.replace_all(&raw_final_content, " ");
 
     // In non-better parsing mode the entire {% if %}...{% endif %} block is
     // matched as a single attribute token, so spaces between the block
