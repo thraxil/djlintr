@@ -58,6 +58,7 @@ pub struct Tokenizer<'a> {
 }
 
 static TAG_RE: OnceLock<Regex> = OnceLock::new();
+static CLOSE_TAG_RE: OnceLock<Regex> = OnceLock::new();
 static COMMENT_RE: OnceLock<Regex> = OnceLock::new();
 static DOCTYPE_RE: OnceLock<Regex> = OnceLock::new();
 static DJANGO_VAR_RE: OnceLock<Regex> = OnceLock::new();
@@ -162,6 +163,33 @@ impl<'a> Iterator for Tokenizer<'a> {
                 column: current_column,
                 offset: current_offset,
             });
+        }
+
+        // Close tags carry no attributes, so they must be `</name ...>` with
+        // the `>` on the same line. Matching them with a dedicated regex stops
+        // the general tag regex below from swallowing a *malformed* close tag
+        // (`</div` with no `>`) across newlines, template tags, and following
+        // tags until some distant `>` — which would drop the swallowed content.
+        // A malformed close tag matches just `</name` and is preserved as-is
+        // (no `>` added), mirroring djlint which leaves it literal.
+        if remaining.starts_with("</") {
+            let close_re = CLOSE_TAG_RE
+                .get_or_init(|| Regex::new(r#"(?i)^</([a-z0-9:._-]+)([^>\n]*>)?"#).unwrap());
+            if let Some(caps) = close_re.captures(remaining) {
+                let m = caps.get(0).unwrap();
+                let name = caps.get(1).unwrap().as_str();
+                let raw = m.as_str();
+                self.update_pos(m.end());
+                return Some(Token::Tag {
+                    name,
+                    raw,
+                    is_closing: true,
+                    is_self_closing: false,
+                    line: current_line,
+                    column: current_column,
+                    offset: current_offset,
+                });
+            }
         }
 
         let tag_re = TAG_RE.get_or_init(|| Regex::new(

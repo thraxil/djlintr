@@ -664,7 +664,13 @@ impl<'a> Formatter<'a> {
                 if self.at_start_of_line {
                     self.push_indent();
                 }
-                self.push_content(&format!("</{}>", name));
+                // A malformed close tag (`</div` with no `>`) is preserved
+                // verbatim rather than reconstructed, matching djlint.
+                if raw.ends_with('>') {
+                    self.push_content(&format!("</{}>", name));
+                } else {
+                    self.push_content(raw);
+                }
                 self.emit_newline_or_continue(
                     token,
                     is_inline_tag(name) && !is_break_before_close_tag(name),
@@ -937,6 +943,12 @@ impl<'a> Formatter<'a> {
             Some(j) => j,
             None => return false,
         };
+
+        // A malformed close tag (`</div` with no `>`) is not a real closer:
+        // djlint leaves the element expanded, so don't collapse it inline.
+        if !self.tokens[j].raw().ends_with('>') {
+            return false;
+        }
 
         let logical_elements = get_logical_elements(children, &self.tokens);
 
