@@ -770,7 +770,14 @@ impl<'a> Formatter<'a> {
                         .map(|j| self.tokens[j].line() == token.ends_on_line())
                         .unwrap_or(false);
 
-                if !self.at_start_of_line && (is_html_block_tag(name) || is_potentially_verbatim) {
+                // A mid-line tag is pushed onto its own line only if djlint's
+                // expand step would break before it: a block tag that is also
+                // in break_html_tags. Block tags absent from break_html_tags
+                // (<canvas>, <noscript>, …) and verbatim tags (<pre>,
+                // <textarea>, <script>, <style> — none of which are in both
+                // sets) stay inline, matching djlint which never breaks around
+                // them.
+                if !self.at_start_of_line && is_html_block_tag(name) && is_break_html_tag(name) {
                     self.trim_and_newline();
                 }
 
