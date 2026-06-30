@@ -1694,6 +1694,23 @@ pub fn format(config: &Config, source: &str) -> String {
 static VAR_RE: OnceLock<Regex> = OnceLock::new();
 static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
 
+/// Normalize the whitespace just inside a `{{ … }}`/`{% … %}` tag. The leading
+/// run collapses to the single space the caller adds. A trailing run is kept
+/// verbatim when it contains a newline — so a closing `%}`/`}}` left on its own
+/// line stays there, matching djlint — and otherwise collapses to one space.
+/// Returns `(body, trailing)` to emit between the delimiters.
+fn normalize_template_inner(inner: &str) -> (&str, &str) {
+    let start = inner.trim_start();
+    let body_len = start.trim_end().len();
+    let (body, trailing) = start.split_at(body_len);
+    let tail = if trailing.contains('\n') || trailing.contains('\r') {
+        trailing
+    } else {
+        " "
+    };
+    (body, tail)
+}
+
 fn normalize_django(raw: &str) -> String {
     let var_re = VAR_RE.get_or_init(|| Regex::new(r#"\{\{[\s\S]*?\}\}"#).unwrap());
     let block_re = BLOCK_RE.get_or_init(|| Regex::new(r#"\{%[\s\S]*?%\}"#).unwrap());
@@ -1704,8 +1721,8 @@ fn normalize_django(raw: &str) -> String {
     result = var_re
         .replace_all(&result, |caps: &regex::Captures| {
             let m = caps.get(0).unwrap().as_str();
-            let content = m[2..m.len() - 2].trim();
-            format!("{{{{ {} }}}}", content)
+            let (body, tail) = normalize_template_inner(&m[2..m.len() - 2]);
+            format!("{{{{ {}{}}}}}", body, tail)
         })
         .to_string();
 
@@ -1713,8 +1730,8 @@ fn normalize_django(raw: &str) -> String {
     result = block_re
         .replace_all(&result, |caps: &regex::Captures| {
             let m = caps.get(0).unwrap().as_str();
-            let content = m[2..m.len() - 2].trim();
-            format!("{{% {} %}}", content)
+            let (body, tail) = normalize_template_inner(&m[2..m.len() - 2]);
+            format!("{{% {}{}%}}", body, tail)
         })
         .to_string();
 
