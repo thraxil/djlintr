@@ -1,0 +1,7 @@
+<tr x-data="{ cves: [
+    {% for cve in row.cves %}
+        { id: '{{ cve.id }}' }
+        {% if not forloop.last %},{% endif %}
+    {% endfor %}
+    ] }">
+</tr>

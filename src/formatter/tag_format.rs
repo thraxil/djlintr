@@ -585,8 +585,11 @@ fn condense_attr_lines(lines: &mut Vec<AttrLine>) {
     }
 }
 
+/// Whether `text` is exactly one `{% … %}` tag (no interior `%}`), so an
+/// already-condensed line like `{% if %},{% endif %}` is not mistaken for a
+/// bare opener and merged with a following closer.
 fn is_template_tag_line(text: &str) -> bool {
-    text.starts_with("{%") && text.ends_with("%}")
+    text.starts_with("{%") && text.ends_with("%}") && !text[2..text.len() - 2].contains("%}")
 }
 
 fn is_block_opener_line(text: &str) -> bool {
