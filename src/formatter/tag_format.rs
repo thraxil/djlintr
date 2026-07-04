@@ -45,6 +45,10 @@ pub(crate) fn format_tag(
     is_ignored_block: bool,
     allow_attr_wrap: bool,
 ) -> String {
+    // djlint does not normalise template-tag spacing (`{{x}}` → `{{ x }}`) in
+    // the attributes of verbatim tags (<script>/<style>/<pre>/<textarea>), so
+    // their attribute values are kept as-is.
+    let is_verbatim = crate::tags::is_verbatim_tag(name);
     let attr_re = attribute_regex(config.better_attribute_parsing);
     let whitespace_re = WHITESPACE_RE.get_or_init(|| Regex::new(r#"\s+"#).unwrap());
     // Used for attribute content: collapse only newline-containing runs (see
@@ -157,7 +161,11 @@ pub(crate) fn format_tag(
                 } else {
                     attr_depth.push(depth);
                 }
-                let normalized = normalize_django(raw_attr);
+                let normalized = if is_verbatim {
+                    raw_attr.to_string()
+                } else {
+                    normalize_django(raw_attr)
+                };
                 let collapsed = attr_ws_re.replace_all(&normalized, " ").to_string();
                 // Quote unquoted template-var values: `name={{ ... }}` →
                 // `name="{{ ... }}"`.  djlint's format_attributes does this
@@ -211,7 +219,11 @@ pub(crate) fn format_tag(
             raw_final_content.push_str(filler);
         }
 
-        let raw_normalized = normalize_django(attr);
+        let raw_normalized = if is_verbatim {
+            attr.to_string()
+        } else {
+            normalize_django(attr)
+        };
         raw_final_content.push_str(&raw_normalized);
 
         if is_django_block {

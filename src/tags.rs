@@ -258,6 +258,17 @@ pub fn is_break_html_tag(name: &str) -> bool {
     )
 }
 
+/// Tags whose content djlint treats as verbatim / an ignored block
+/// (`<script>`, `<style>`, `<pre>`, `<textarea>`). djlint does not normalise
+/// template-tag spacing (`{{x}}` → `{{ x }}`) on these — including in their
+/// opening tag's attributes.
+pub fn is_verbatim_tag(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "script" | "style" | "pre" | "textarea"
+    )
+}
+
 /// Whether djlint's expand step forces this tag onto its own line — i.e. it is
 /// a block tag that is also in `break_html_tags`. Tags that are neither (SVG
 /// shapes like `<circle>`, verbatim `<pre>`/`<textarea>`) or block-but-not-broken
