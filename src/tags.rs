@@ -258,6 +258,15 @@ pub fn is_break_html_tag(name: &str) -> bool {
     )
 }
 
+/// Whether djlint's expand step forces this tag onto its own line — i.e. it is
+/// a block tag that is also in `break_html_tags`. Tags that are neither (SVG
+/// shapes like `<circle>`, verbatim `<pre>`/`<textarea>`) or block-but-not-broken
+/// (`<canvas>`, `<noscript>`) stay on the same line as their neighbours, so
+/// they behave "inline-ish" for line-break decisions.
+pub fn breaks_onto_own_line(name: &str) -> bool {
+    is_html_block_tag(name) && is_break_html_tag(name)
+}
+
 /// HTML tags djlint treats as indentable (`indent_html_tags`). djlint's
 /// expand step only leaves a block template tag (`{% if %}` …) un-broken
 /// inside an attribute value when the value's enclosing tag is one of these

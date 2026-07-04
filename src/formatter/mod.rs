@@ -2,8 +2,8 @@ pub mod tokenizer;
 
 use crate::config::Config;
 use crate::tags::{
-    is_break_html_tag, is_condensable_tag, is_html_block_tag, is_inline_tag, is_structural_tag,
-    should_indent_children, should_wrap_attributes,
+    breaks_onto_own_line, is_break_html_tag, is_condensable_tag, is_html_block_tag, is_inline_tag,
+    is_structural_tag, should_indent_children, should_wrap_attributes,
 };
 use regex::Regex;
 use std::sync::OnceLock;
@@ -777,7 +777,7 @@ impl<'a> Formatter<'a> {
                 // <textarea>, <script>, <style> — none of which are in both
                 // sets) stay inline, matching djlint which never breaks around
                 // them.
-                if !self.at_start_of_line && is_html_block_tag(name) && is_break_html_tag(name) {
+                if !self.at_start_of_line && breaks_onto_own_line(name) {
                     self.trim_and_newline();
                 }
 
@@ -1196,7 +1196,10 @@ impl<'a> Formatter<'a> {
             if is_inline_tag(name) {
                 self.last_inline_collapse = Some((self.tokens[j].line(), name));
             }
-            self.emit_newline_or_continue(token, is_inline_tag(name));
+            // Non-breaking tags (SVG shapes like <circle>, <pre>, …) continue on
+            // the same line as a following sibling, matching djlint which never
+            // inserts a break around them.
+            self.emit_newline_or_continue(token, !breaks_onto_own_line(name));
             true
         } else {
             false

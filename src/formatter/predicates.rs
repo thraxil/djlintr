@@ -93,7 +93,10 @@ pub(crate) fn is_inline_ish(token: &Token, config: &Config) -> bool {
             !is_block_tag(strip_end_prefix(tag_name), &config.custom_blocks)
         }
         Token::Text { raw, .. } => !raw.starts_with('\n') && !raw.starts_with("\r\n"),
-        Token::Tag { name, .. } => is_inline_tag(name),
+        // A tag continues on the same line unless djlint would break it onto its
+        // own line (block tag in break_html_tags). SVG shapes like `<circle>`
+        // and verbatim `<pre>` stay inline with their neighbours.
+        Token::Tag { name, .. } => !breaks_onto_own_line(name),
         Token::Comment { raw, .. } | Token::DjangoComment { raw, .. } => !raw.contains('\n'),
         Token::Doctype { .. } => false,
     }
