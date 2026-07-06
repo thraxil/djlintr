@@ -217,6 +217,29 @@ impl<'a> Formatter<'a> {
             .any(|(pos, t)| *pos < self.pos && *t == text)
     }
 
+    /// Whether the source line starting at `pos` ends with a closing inline
+    /// tag (e.g. `</span>`), allowing intervening vars/inline text with no line
+    /// break in between. djlint dedents such a line by one level.
+    fn line_ends_with_closing_inline(&self, pos: usize, line: usize) -> bool {
+        let mut p = pos;
+        while let Some(tok) = self.tokens.get(p) {
+            if tok.line() != line {
+                return false;
+            }
+            match tok {
+                Token::Tag {
+                    name,
+                    is_closing: true,
+                    ..
+                } => return is_inline_tag(name) && !is_break_before_close_tag(name),
+                Token::DjangoVar { .. } => p += 1,
+                Token::Text { raw, .. } if !raw.contains('\n') && !raw.contains('\r') => p += 1,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Whether the current whitespace-only text token sits between inline
     /// content and a poisoned closer (e.g. the `  ` in `</a>  {% endif %}`).
     /// djlint keeps the closer on that line, so the spacing must be preserved
@@ -1242,15 +1265,7 @@ impl<'a> Formatter<'a> {
                 // when the parent tag actually incremented indent
                 // (i.e. it was at the start of a line, not mid-line).
                 let last_line_closes_inline = self.should_continue_inline(token, true)
-                    && self.pos + 1 < self.tokens.len()
-                    && matches!(
-                        &self.tokens[self.pos + 1],
-                        Token::Tag {
-                            name: n,
-                            is_closing: true,
-                            ..
-                        } if is_inline_tag(n) && !is_break_before_close_tag(n)
-                    )
+                    && self.line_ends_with_closing_inline(self.pos + 1, token.ends_on_line())
                     && self
                         .parent_stack
                         .last()
