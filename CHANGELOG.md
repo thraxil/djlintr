@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-07
+
+### Fixed
+
+- **Formatter**: Fixed `<textarea>` closing when it contains wrapped content.
+- **Formatter**: Fixed tokenizing tags with newlines or `>` inside quoted attribute values (e.g. a multi-line Alpine `x-data` containing arrow functions).
+- **Formatter**: Fixed handling of malformed close tags (`</div` with no `>`), which previously swallowed following content.
+- **Formatter**: Fixed closing-tag placement for empty elements not in `break_html_tags` (e.g. `<canvas>`, `<noscript>`).
+- **Formatter**: Fixed `{% if %}` / `{% for %}` block expansion inside attribute values — for Alpine/JS object literals, SVG shape attributes, and values containing an HTML comment or `>` before the block — including keeping the block's closing marker on its own line.
+- **Formatter**: Fixed an indent leak when `{# djlint:off #}` appears mid-tag, and fixed a self-contained `{# djlint:off #}`…`{# djlint:on #}` region inside a tag's attributes.
+- **Formatter**: Matched djlint's quirk where a `djlint:off` region's `{% endif %}` suppresses line-breaking of later inline `{% endif %}` tags.
+- **Formatter**: Fixed content staying inline after a tag with an unquoted `{{ … }}` attribute.
+- **Formatter**: Preserved author-intended double spaces inside attribute values; only whitespace runs containing a newline are collapsed.
+- **Formatter**: Fixed verbatim tags (`<pre>`, `<textarea>`) staying inline after preceding content, and stopped normalizing template-tag spacing (`{{x}}` → `{{ x }}`) inside verbatim tags (`<script>`, `<style>`, `<pre>`, `<textarea>`).
+- **Formatter**: Preserved the closing marker on its own line for multi-line `{% … %}` tags (e.g. an `{% include %}` with each argument on its own line).
+- **Formatter**: Fixed consecutive SVG shape elements (e.g. `<circle>`) staying on one line.
+- **Formatter**: Fixed dedent of a multi-line text run whose last line ends with a closing inline tag.
+
+### Changed
+
+- **Formatter**: Consolidated `djlint:off` tag handling and template/break-tag classification into shared helpers.
+
 ## [0.6.1] - 2026-06-10
 
 ### Fixed
