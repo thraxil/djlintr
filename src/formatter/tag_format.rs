@@ -449,7 +449,7 @@ fn expand_attr_value(
     always: bool,
     config: &Config,
 ) -> Option<String> {
-    if !always && !value_has_bare_brace(value) {
+    if !always && !backscan_blocked(value, &config.custom_blocks) {
         return None;
     }
 
@@ -534,7 +534,13 @@ fn expand_attr_value(
     if !head_done {
         head = pending.trim_end().to_string();
     } else {
-        flush_pending(&mut pending, &mut lines, level);
+        // djlint breaks after the last block tag, so whatever follows it goes
+        // on its own line — including the closing quote when the trailing text
+        // is empty (`{% endif %}` then `">`, not `{% endif %}">`).
+        lines.push(AttrLine {
+            level,
+            text: pending.trim().to_string(),
+        });
     }
 
     condense_attr_lines(&mut lines);
@@ -621,6 +627,34 @@ fn is_block_closer_line(text: &str) -> bool {
             .next()
             .unwrap_or("")
             .starts_with("end")
+}
+
+/// Whether djlint's "is this template tag inside an html tag" back-scan would
+/// be blocked before the value's first block template tag — i.e. the prefix up
+/// to that tag contains a `>` (e.g. from an HTML comment or arrow) or a bare
+/// `{`/`}`. When blocked, djlint treats the block tags as loose and expands
+/// them onto their own lines.
+fn backscan_blocked(value: &str, custom_blocks: &[String]) -> bool {
+    let mut offset = 0;
+    while let Some(rel) = value[offset..].find("{%") {
+        let start = offset + rel;
+        let Some(end_rel) = value[start..].find("%}") else {
+            break;
+        };
+        let end = start + end_rel + 2;
+        let word = value[start + 2..end - 2]
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if crate::tags::is_django_block_tag(word, custom_blocks)
+            || matches!(word, "else" | "elif" | "empty")
+        {
+            let prefix = &value[..start];
+            return prefix.contains('>') || value_has_bare_brace(prefix);
+        }
+        offset = end;
+    }
+    false
 }
 
 /// Whether `value` contains a `{` or `}` that is not part of a `{{ }}`,
