@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-08
+
+### Fixed
+
+- **Formatter**: Fixed parsing of a quoted attribute value containing a template tag with a nested quote of the same kind (e.g. `class="{% if x == "home" %}…"`), which previously mis-tokenized the tag and garbled its output.
+
 ## [0.6.2] - 2026-07-07
 
 ### Fixed
