@@ -192,8 +192,12 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
         }
 
+        // A quoted attribute value may contain a `{{ … }}`/`{% … %}` template
+        // tag that itself contains the quote character (e.g.
+        // `class="{% if x == "home" %}…"`). Match those template tags inside
+        // the value so the nested quote doesn't prematurely end it.
         let tag_re = TAG_RE.get_or_init(|| Regex::new(
-            r#"(?i)^</?([a-z0-9:._-]+)(?:"[^"]*"|'[^']*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}|[^>{}'"])*>"#,
+            r#"(?i)^</?([a-z0-9:._-]+)(?:"(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^"])*"|'(?:\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|[^'])*'|\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}|[^>{}'"])*>"#,
         ).unwrap());
         if let Some(m) = tag_re.find(remaining) {
             let caps = tag_re.captures(remaining).unwrap();

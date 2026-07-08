@@ -400,7 +400,7 @@ fn expand_attr_template_blocks(
                 let quote = rest.as_bytes()[qpos] as char;
                 result.push_str(&rest[..qpos]);
                 let after_q = &rest[qpos + 1..];
-                match after_q.find(quote) {
+                match find_attr_value_end(after_q, quote) {
                     None => {
                         // Unterminated quote: copy the remainder verbatim.
                         result.push_str(&rest[qpos..]);
@@ -428,6 +428,40 @@ fn expand_attr_template_blocks(
     } else {
         None
     }
+}
+
+/// Find the byte offset of the closing `quote` for an attribute value,
+/// skipping over `{{ … }}`/`{% … %}` template tags that may themselves contain
+/// the quote character (e.g. `class="{% if x == "home" %}…"`). Returns `None`
+/// if no closing quote is found.
+fn find_attr_value_end(s: &str, quote: char) -> Option<usize> {
+    let mut i = 0;
+    while i < s.len() {
+        let rest = &s[i..];
+        if rest.starts_with(quote) {
+            return Some(i);
+        }
+        if rest.starts_with("{%") {
+            match rest.find("%}") {
+                Some(e) => {
+                    i += e + 2;
+                    continue;
+                }
+                None => return None,
+            }
+        }
+        if rest.starts_with("{{") {
+            match rest.find("}}") {
+                Some(e) => {
+                    i += e + 2;
+                    continue;
+                }
+                None => return None,
+            }
+        }
+        i += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    None
 }
 
 /// One rendered line of an expanded attribute value: its indent `level` and
