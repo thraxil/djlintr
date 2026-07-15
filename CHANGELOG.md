@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-07-15
+
+### Fixed
+
+- **Formatter**: Fixed a Django block that opens and closes on the same line (e.g. `{% component … %}{% endcomponent %}`) inside an inlined HTML element having its opening tag swallowed, leaving an unbalanced closing tag.
+
 ## [0.6.3] - 2026-07-08
 
 ### Fixed
