@@ -442,22 +442,14 @@ fn find_attr_value_end(s: &str, quote: char) -> Option<usize> {
             return Some(i);
         }
         if rest.starts_with("{%") {
-            match rest.find("%}") {
-                Some(e) => {
-                    i += e + 2;
-                    continue;
-                }
-                None => return None,
-            }
+            let e = rest.find("%}")?;
+            i += e + 2;
+            continue;
         }
         if rest.starts_with("{{") {
-            match rest.find("}}") {
-                Some(e) => {
-                    i += e + 2;
-                    continue;
-                }
-                None => return None,
-            }
+            let e = rest.find("}}")?;
+            i += e + 2;
+            continue;
         }
         i += rest.chars().next().map_or(1, char::len_utf8);
     }
