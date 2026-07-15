@@ -10,13 +10,15 @@ pub(crate) fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, 
         Token::Tag { name, .. } => {
             let mut j = index + 1;
             let mut depth = 1;
-            while j < tokens.len() {
+            'outer: while j < tokens.len() {
                 // When a template block opens AND closes on the same source
                 // line (e.g. `{% if %}..{% endif %}` all on one line), djlint's
                 // line-based indenter ignores any HTML opening/closing tags
                 // inside that block for indentation purposes.  Mirror this by
-                // skipping to the template closer so unbalanced HTML inside
-                // the block does not affect our depth counter.
+                // skipping past the template closer so unbalanced HTML inside
+                // the block does not affect our depth counter — but still
+                // record every token in the block (opener, body, closer) as a
+                // child so it survives inline rendering.
                 if let Token::DjangoBlock { raw, .. } = &tokens[j] {
                     let tag_name = get_django_tag_name(raw).unwrap_or("");
                     let is_potential_opener = !tag_name.starts_with("end")
@@ -33,10 +35,17 @@ pub(crate) fn get_children_info(index: usize, tokens: &[Token]) -> (Vec<usize>, 
                                 } else if kn.starts_with("end") && &kn[3..] == tag_name {
                                     block_depth -= 1;
                                     if block_depth == 0 {
-                                        // Found the matching closer on the
-                                        // same line — skip to it.
-                                        j = k;
-                                        break;
+                                        // Found the matching closer on the same
+                                        // line.  Every token from the opener
+                                        // through the closer is a direct child
+                                        // of this tag; push the whole span and
+                                        // continue past it without touching the
+                                        // depth counter.
+                                        if depth == 1 {
+                                            children.extend(j..=k);
+                                        }
+                                        j = k + 1;
+                                        continue 'outer;
                                     }
                                 }
                             }
