@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pin the Rust toolchain used to compile the wheels so release builds are
+  # reproducible. Keep in sync with RUST_TOOLCHAIN in ci.yml and flake.nix.
+  RUST_TOOLCHAIN: "1.96.1"
+
 jobs:
   build-wheels:
     name: Build Wheels (${{ matrix.target }})
@@ -39,6 +44,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           sccache: 'true'
+          rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Upload wheels
         uses: actions/upload-artifact@v7
