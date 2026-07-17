@@ -14,7 +14,10 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        # Pinned so local dev, `cargo clippy`, and CI all agree on one
+        # toolchain. Keep this version in sync with RUST_TOOLCHAIN in
+        # .github/workflows/ci.yml.
+        rustToolchain = pkgs.rust-bin.stable."1.96.1".default.override {
           extensions = [ "rust-src" "rust-analyzer" ];
         };
       in
